@@ -4,9 +4,10 @@ use kanal::{Sender, bounded};
 use std::thread;
 use tracing::debug;
 
+type SendType<J, R> = Sender<Option<(J, Sender<R>)>>;
 pub struct ThreadPool<J, R> {
     workers: Vec<thread::JoinHandle<()>>,
-    sender: Option<Sender<Option<(J, Sender<R>)>>>,
+    sender: Option<SendType<J, R>>,
 }
 
 impl<J, R> ThreadPool<J, R>
