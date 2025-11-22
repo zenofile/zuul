@@ -17,8 +17,8 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 tracing-journald = "0.3"
 regex = "1"
 thiserror = "2"
-ureq = { version = "3", default-features = false, features = ["native-tls"] }
 kanal = { version = "0.1", default-features = false }
+curl = { version = "0.4", features = ["http2"] }
 
 [profile.dev]
 incremental = true

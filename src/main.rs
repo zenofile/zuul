@@ -360,55 +360,59 @@ struct DownloadJob {
 #[derive(Debug)]
 struct DownloadResult {
     url: String,
-    content: Result<Vec<String>>,
+    content: Result<String>,
 }
 
 // Convenience constructor for downloads
 impl ThreadPool<DownloadJob, DownloadResult> {
+    // Convenience constructor for downloads
     fn downloader(size: usize, timeout: u64) -> Self {
-        use ureq::tls::{TlsConfig, TlsProvider};
-
-        let config = ureq::Agent::config_builder()
-            .timeout_global(std::time::Duration::from_secs(timeout).into())
-            .user_agent("Mozilla/5.0 (compatible; nft-void/0.1.0)")
-            .tls_config(
-                TlsConfig::builder()
-                    .provider(TlsProvider::NativeTls)
-                    .build(),
-            )
-            .build();
-
-        let agent = ureq::Agent::new_with_config(config);
-
         Self::new(
             size.try_into().expect("Pool size must be > 0"),
-            move |job| download_list_trimmed(&agent, job),
+            move |job| download_url(timeout, job),
         )
     }
 }
 
-fn download_list_trimmed(client: &ureq::Agent, job: DownloadJob) -> DownloadResult {
-    let content = (|| -> Result<Vec<String>> {
-        let mut response = client
-            .get(&*job.url)
-            .call()
-            .context(format!("Failed to download: {}", job.url))?;
+fn download_url(timeout: u64, job: DownloadJob) -> DownloadResult {
+    let content = (|| -> Result<String> {
+        let mut dst = Vec::new();
+        let mut easy = curl::easy::Easy::new();
 
-        let text = response
-            .body_mut()
-            .read_to_string()
-            .context("Failed to read response body")?;
-        debug!("Got {} bytes of data", text.len());
+        easy.url(&job.url)
+            .context(format!("Failed to set URL: {}", job.url))?;
+        easy.timeout(std::time::Duration::from_secs(timeout))
+            .context("Failed to set timeout")?;
+        easy.useragent("Mozilla/5.0 (compatible; nft-void/0.1.0)")
+            .context("Failed to set user agent")?;
+        easy.follow_location(true)
+            .context("Failed to enable follow location")?;
 
-        // Just return raw lines, trimmed and non-empty
-        let lines = text
-            .lines()
-            .map(str::trim)
-            .filter(|s| !s.is_empty())
-            .map(String::from)
-            .collect();
+        {
+            let mut transfer = easy.transfer();
+            transfer
+                .write_function(|data| {
+                    dst.extend_from_slice(data);
+                    Ok(data.len())
+                })
+                .context("Failed to set write function")?;
 
-        Ok(lines)
+            transfer
+                .perform()
+                .context(format!("Failed to download: {}", job.url))?;
+        }
+
+        let response_code = easy
+            .response_code()
+            .context("Failed to get response code")?;
+        if !(200..300).contains(&response_code) {
+            anyhow::bail!("HTTP request failed with status code: {}", response_code);
+        }
+
+        let text = String::from_utf8(dst).context("Failed to parse response body as UTF-8")?;
+        debug!("Got {} bytes of data from {}", text.len(), job.url);
+
+        Ok(text)
     })();
 
     DownloadResult {
@@ -442,20 +446,25 @@ fn download_files_aggregated(
     let mut aggregated = Vec::with_capacity(4096);
     let mut received = 0;
     while received < num_jobs {
-        match result_receiver.recv() {
-            Ok(result) => {
-                received += 1;
-                match result.content {
-                    Ok(lines) => {
-                        info!("Downloaded {} lines from {}", lines.len(), result.url);
-                        aggregated.extend(lines);
-                    }
-                    Err(e) => {
-                        warn!("Failed to download {}: {}", result.url, e);
-                    }
+        if let Ok(result) = result_receiver.recv() {
+            received += 1;
+            match result.content {
+                Ok(text) => {
+                    let lines = text.lines().map(str::trim).filter(|s| !s.is_empty());
+
+                    let start_len = aggregated.len();
+                    aggregated.extend(lines.map(String::from));
+
+                    info!(
+                        "Downloaded {} lines from {}",
+                        aggregated.len() - start_len,
+                        result.url
+                    );
+                }
+                Err(e) => {
+                    warn!("Failed to download {}: {}", result.url, e);
                 }
             }
-            Err(_) => break,
         }
     }
 
