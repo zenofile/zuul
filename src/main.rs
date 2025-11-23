@@ -69,6 +69,24 @@ enum Action {
     Config,
 }
 
+#[derive(Debug, Deserialize, Serialize, Clone)]
+#[serde(default)]
+struct LogConfig {
+    enabled: bool,
+    rate: u64,
+    burst: u64,
+}
+
+impl Default for LogConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            rate: 10,
+            burst: 5,
+        }
+    }
+}
+
 #[derive(Debug, Deserialize)]
 struct Config {
     #[serde(rename = "IP_VERSIONS")]
@@ -82,6 +100,9 @@ struct Config {
 
     #[serde(rename = "BLOCK_POLICY", default = "default_drop")]
     block_policy: Box<str>,
+
+    #[serde(rename = "LOGGING")]
+    logging: LogConfig,
 
     #[serde(rename = "IIFNAME", default = "get_default_interface")]
     iifname: Option<String>,
@@ -266,6 +287,17 @@ impl std::fmt::Display for Config {
         writeln!(f, "SET_NAMES: {:?}", self.set_names)?;
         writeln!(f, "DEFAULT_POLICY: {}", self.default_policy)?;
         writeln!(f, "BLOCK_POLICY: {}", self.block_policy)?;
+
+        if self.logging.enabled {
+            writeln!(
+                f,
+                "LOGGING: enabled (rate: {}/min, burst: {})",
+                self.logging.rate, self.logging.burst
+            )?;
+        } else {
+            writeln!(f, "LOGGING: disabled")?;
+        }
+
         writeln!(f, "IIFNAME: {:?}", self.iifname)?;
         writeln!(f, "WHITELIST: {:?}", self.whitelist)?;
         writeln!(f, "BLACKLIST: {:?}", self.blacklist)?;
@@ -567,10 +599,12 @@ fn generate_nftable(context: &AppContext, sets: &IpSets) -> Result<String> {
 
     // Render template with all context
     use minijinja::context;
+
     let rules = template.render(context! {
         iifname => cfg.iifname.as_deref().unwrap(),
         default_policy => &cfg.default_policy,
         block_policy => &cfg.block_policy,
+        logging => &cfg.logging,
         set_names => &cfg.set_names,
         sets => set_data,
         ip_versions => context! {

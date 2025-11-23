@@ -15,6 +15,15 @@ DEFAULT_POLICY: accept
 # Block policy: 'drop' or 'reject', default: 'drop'
 BLOCK_POLICY: drop
 
+# Logging configuration
+# enable: Turn logging on or off (true/false)
+# rate: Packet rate limit (packets/minute)
+# burst: Packet burst limit
+LOGGING:
+  enabled: true
+  rate: 10
+  burst: 5
+
 # Input interface name. If this is commented out, the default gateway interface will be used
 # IIFNAME: eth0
 
