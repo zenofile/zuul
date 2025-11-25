@@ -570,6 +570,8 @@ fn generate_nftable(context: &AppContext, sets: &IpSets) -> Result<String> {
         fs::read_to_string(&context.template).context("Failed to read template file")?;
 
     let mut env = minijinja::Environment::new();
+    env.set_trim_blocks(true);
+    env.set_lstrip_blocks(true);
     env.add_template("nft-void", &template_content)?;
     let template = env.get_template("nft-void")?;
 

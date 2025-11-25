@@ -8,7 +8,7 @@ After=nft-void-main.service
 [Timer]
 OnBootSec=24h
 OnUnitActiveSec=24h
-Persistent=true
+Persistent=false
 
 [Install]
 WantedBy=timers.target

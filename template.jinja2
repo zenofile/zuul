@@ -35,6 +35,11 @@ table netdev blackhole {
         elements = { {{ sets.country_v4 }} }
         {% endif %}
     }
+
+    counter {{ set_names.whitelist }}_v4_cnt {}
+    counter {{ set_names.blacklist}}_v4_cnt {}
+    counter {{ set_names.abuselist }}_v4_cnt {}
+    counter {{ set_names.country }}_v4_cnt {}
 {% endif %}
 
 {% if ip_versions.v6 %}
@@ -73,33 +78,35 @@ table netdev blackhole {
         elements = { {{ sets.country_v6 }} }
         {% endif %}
     }
+
+    counter {{ set_names.whitelist }}_v6_cnt {}
+    counter {{ set_names.blacklist}}_v6_cnt {}
+    counter {{ set_names.abuselist }}_v6_cnt {}
+    counter {{ set_names.country }}_v6_cnt {}
 {% endif %}
 
     chain input {
         type filter hook ingress device {{ iifname }} priority -190; policy {{ default_policy }};
 
 {% if ip_versions.v4 %}
-        ip saddr @{{ set_names.whitelist }}_v4 counter accept
-        ip saddr @{{ set_names.blacklist}}_v4 counter goto log-debug
-        ip saddr @{{ set_names.abuselist }}_v4 counter goto log-debug
-        ip saddr @{{ set_names.country }}_v4 counter goto log-debug
+        ip saddr @{{ set_names.whitelist }}_v4 counter name {{ set_names.whitelist }}_v4_cnt accept
+        ip saddr @{{ set_names.blacklist}}_v4 counter name {{ set_names.blacklist}}_v4_cnt goto log-debug
+        ip saddr @{{ set_names.abuselist }}_v4 counter name {{ set_names.abuselist }}_v4_cnt goto log-debug
+        ip saddr @{{ set_names.country }}_v4 counter name {{ set_names.country }}_v4_cnt goto log-debug
 {% endif %}
 
 {% if ip_versions.v6 %}
-        ip6 saddr @{{ set_names.whitelist }}_v6 counter accept
-        ip6 saddr @{{ set_names.blacklist}}_v6 counter goto log-debug
-        ip6 saddr @{{ set_names.abuselist }}_v6 counter goto log-debug
-        ip6 saddr @{{ set_names.country }}_v6 counter goto log-debug
+        ip6 saddr @{{ set_names.whitelist }}_v6 counter name {{ set_names.whitelist }}_v6_cnt accept
+        ip6 saddr @{{ set_names.blacklist}}_v6 counter name {{ set_names.blacklist }}_v6_cnt goto log-debug
+        ip6 saddr @{{ set_names.abuselist }}_v6 counter name {{ set_names.abuselist }}_v6_cnt goto log-debug
+        ip6 saddr @{{ set_names.country }}_v6 counter name {{ set_names.country }}_v6_cnt goto log-debug
 {% endif %}
-
-        counter
     }
 
     chain log-debug {
     {% if logging.enabled %}
-        limit rate {{ logging.rate }}/minute burst {{ logging.burst }} packets counter log level debug {{ block_policy }}
-    {% else %}
-        {{ block_policy }}
+        limit rate {{ logging.rate }}/minute burst {{ logging.burst }} packets log level debug
     {% endif %}
+        {{ block_policy }}
     }
 }
