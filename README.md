@@ -8,19 +8,24 @@ A high-performance utility for managing nftables-based IP blocklists with suppor
 - **Dual-stack support**: IPv4 and IPv6 with independent configuration
 - **Concurrent downloads**: Multi-threaded fetching of remote IP lists
 - **Template-based rules**: Jinja2 templating for flexible nftables rule generation
+- **Multi-interface template**: Supports multiple network interfaces
 - **Systemd integration**: Includes service and timer units for automated updates
+- **Sandboxing**: Optional landlock based sandboxing (enabled by default)
 
 
 ## Requirements
 
-- Linux kernel with nftables support
+- Linux kernel (>= 6.12 for landlock) with nftables support
 - Rust 2024 edition or later
+
+### When dynamically linked:
 - libssl >= 3
+- libcurl >= 4
 
 ## Installation
 
 ```cli
-cargo build --release
+cargo build --release --features=static
 cp target/release/zuul /usr/local/bin/
 mkdir -p /usr/local/etc/zuul/
 cp config.yaml template.jinja2 /usr/local/etc/zuul/
@@ -37,7 +42,7 @@ Edit `config.yaml` to configure IP versions, block policies, whitelists, blackli
 ## Usage
 
 ```log
-Usage: zuul [OPTIONS] --config <CONFIG> --template <TEMPLATE> <COMMAND>
+Usage: zuul [OPTIONS] <COMMAND>
 
 Commands:
   start    Start zuul and create firewall rules
@@ -51,8 +56,9 @@ Options:
   -c, --config <CONFIG>      Path to configuration file
   -t, --template <TEMPLATE>  Path to template file
   -v, --verbose...           Increase verbosity level (-v, -vv, -vvv, etc.)
-  -w, --threads <THREADS>    Number of worker threads [default: 4]
+  -w, --threads <THREADS>    Number of worker threads [default: 8]
       --timeout <TIMEOUT>    Timeout for requests in seconds [default: 10]
+  -s, --enforce-sandbox      Enforce sandboxing
   -n, --dry-run              Perform a dry-run without making actual changes
   -h, --help                 Print help
 ```

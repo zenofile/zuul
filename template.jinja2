@@ -89,19 +89,19 @@ table netdev blackhole {
     chain input_{{ iface }} {
         type filter hook ingress device {{ iface }} priority -190; policy {{ default_policy }};
 
-{% if ip_versions.v4 %}
+    {% if ip_versions.v4 %}
         ip saddr @{{ set_names.whitelist }}_v4 counter name {{ set_names.whitelist }}_v4_cnt accept
         ip saddr @{{ set_names.blacklist}}_v4 counter name {{ set_names.blacklist}}_v4_cnt goto log-debug
         ip saddr @{{ set_names.abuselist }}_v4 counter name {{ set_names.abuselist }}_v4_cnt goto log-debug
         ip saddr @{{ set_names.country }}_v4 counter name {{ set_names.country }}_v4_cnt goto log-debug
-{% endif %}
+    {% endif %}
 
-{% if ip_versions.v6 %}
+    {% if ip_versions.v6 %}
         ip6 saddr @{{ set_names.whitelist }}_v6 counter name {{ set_names.whitelist }}_v6_cnt accept
         ip6 saddr @{{ set_names.blacklist}}_v6 counter name {{ set_names.blacklist }}_v6_cnt goto log-debug
         ip6 saddr @{{ set_names.abuselist }}_v6 counter name {{ set_names.abuselist }}_v6_cnt goto log-debug
         ip6 saddr @{{ set_names.country }}_v6 counter name {{ set_names.country }}_v6_cnt goto log-debug
-{% endif %}
+    {% endif %}
     }
 
     {% endfor %}
