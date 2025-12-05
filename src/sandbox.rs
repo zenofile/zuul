@@ -9,12 +9,34 @@ use landlock::{
 use std::path::Path;
 use tracing::{info, warn};
 
+/// The enforcement status of the sandbox.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Status {
+    /// The sandbox is fully active and enforcing all rules.
+    Full,
+    /// The sandbox is partially active (some features may be missing).
+    Partial,
+    /// The sandbox is not enforcing any rules (e.g., unsupported kernel).
+    None,
+}
+
+// Optional: Implement Display for nicer error messages
+impl std::fmt::Display for Status {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Full => write!(f, "Fully Enforced"),
+            Self::Partial => write!(f, "Partially Enforced"),
+            Self::None => write!(f, "Not Enforced"),
+        }
+    }
+}
+
 /// Applies Landlock sandboxing restrictions.
 ///
 /// # Arguments
 ///
 /// * `user_read_paths` - An iterator of file paths to allow read-only access to.
-pub fn harden<I, P>(user_read_paths: I) -> Result<()>
+pub fn harden<I, P>(user_read_paths: I) -> Result<Status>
 where
     I: IntoIterator<Item = P>,
     P: AsRef<Path>,
@@ -86,11 +108,18 @@ where
         .restrict_self()
         .context("Failed to enforce Landlock restrictions")?;
 
-    match status.ruleset {
-        RulesetStatus::FullyEnforced => info!("Landlock sandbox fully active."),
-        RulesetStatus::PartiallyEnforced => warn!("Landlock sandbox partially enforced."),
-        RulesetStatus::NotEnforced => warn!("Landlock sandbox NOT enforced."),
+    // Map internal status to public enum
+    let public_status = match status.ruleset {
+        RulesetStatus::FullyEnforced => Status::Full,
+        RulesetStatus::PartiallyEnforced => Status::Partial,
+        RulesetStatus::NotEnforced => Status::None,
+    };
+
+    match public_status {
+        Status::Full => info!("Landlock sandbox fully active."),
+        Status::Partial => warn!("Landlock sandbox partially enforced."),
+        Status::None => warn!("Landlock sandbox NOT enforced."),
     }
 
-    Ok(())
+    Ok(public_status)
 }

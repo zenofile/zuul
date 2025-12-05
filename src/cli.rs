@@ -30,6 +30,11 @@ pub struct Cli {
     #[arg(long, default_value_t = 10)]
     pub timeout: u64,
 
+    #[cfg(feature = "sandbox")]
+    /// Enforce sandboxing
+    #[arg(short = 's', long)]
+    pub enforce_sandbox: bool,
+
     /// Perform a dry-run without making actual changes
     #[arg(short = 'n', long)]
     pub dry_run: bool,

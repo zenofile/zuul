@@ -7,7 +7,7 @@ After=zuulmain.service
 
 [Service]
 Type=oneshot
-ExecStart=/usr/local/bin/zuul -v -c /usr/local/etc/zuul/config.yaml -t /usr/local/etc/zuul/template.jinja2 refresh
+ExecStart=/usr/local/bin/zuul --verbose --enforce-sandbox --config /usr/local/etc/zuul/config.yaml --template /usr/local/etc/zuul/template.jinja2 refresh
 TimeoutStartSec=120
 
 # Security Hardening - Capabilities

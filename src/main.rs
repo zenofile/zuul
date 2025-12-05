@@ -677,9 +677,16 @@ fn main() -> Result<()> {
 
     // Landlock init
     #[cfg(feature = "sandbox")]
-    if let Err(e) = sandbox::harden([&config_path, &template_path]) {
-        error!("Fatal: Failed to initialize sandbox: {:#}", e);
-        std::process::exit(1);
+    match sandbox::harden([&config_path, &template_path]) {
+        Ok(sandbox::Status::Full) => info!("Landlock sandbox fully active."),
+        Ok(status) if cli.enforce_sandbox => {
+            anyhow::bail!("Fatal: Sandbox is enforced but status is: {}", status)
+        }
+        Ok(status) => warn!("Landlock sandbox is only {}.", status),
+        Err(e) if cli.enforce_sandbox => {
+            return Err(e).context("Fatal: Failed to initialize sandbox");
+        }
+        Err(e) => warn!("Failed to initialize sandbox: {:#}", e),
     }
 
     let config = Config::load(&config_path)?;
