@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright © 2025 zenofile <zenofile-sf6@unsha.re>
+
 /// CIDR parsing from ascii since ipnet only supports &str
 #[derive(Debug, Clone, Copy)]
 pub struct InvalidPrefix;
@@ -88,49 +91,24 @@ fn parse_raw_prefix(bytes: &[u8], max: u8) -> Option<u8> {
         .filter(|&num| num <= max)
 }
 
-#[derive(Debug, Clone, Copy)]
-pub struct SafeIpv4Prefix(Ipv4Prefix);
+pub trait PrefixCheck {
+    const MIN_PREFIX_LEN_V4: u8 = 8;
+    const MIN_PREFIX_LEN_V6: u8 = 16;
 
-impl TryFrom<&[u8]> for SafeIpv4Prefix {
-    type Error = InvalidPrefix;
+    fn meets_min_prefix(&self, min: u8) -> bool;
+}
 
-    fn try_from(bytes: &[u8]) -> Result<Self, Self::Error> {
-        let prefix = Ipv4Prefix::try_from(bytes)?;
-
-        if prefix.as_u8() == 0 {
-            return Err(InvalidPrefix);
-        }
-
-        Ok(Self(prefix))
+impl PrefixCheck for ipnet::Ipv4Net {
+    #[inline]
+    fn meets_min_prefix(&self, min: u8) -> bool {
+        self.prefix_len() >= min
     }
 }
 
-impl From<SafeIpv4Prefix> for Ipv4Prefix {
-    fn from(safe: SafeIpv4Prefix) -> Self {
-        safe.0
-    }
-}
-
-#[derive(Debug, Clone, Copy)]
-pub struct SafeIpv6Prefix(Ipv6Prefix);
-
-impl TryFrom<&[u8]> for SafeIpv6Prefix {
-    type Error = InvalidPrefix;
-
-    fn try_from(bytes: &[u8]) -> Result<Self, Self::Error> {
-        let prefix = Ipv6Prefix::try_from(bytes)?;
-
-        if prefix.as_u8() == 0 {
-            return Err(InvalidPrefix);
-        }
-
-        Ok(Self(prefix))
-    }
-}
-
-impl From<SafeIpv6Prefix> for Ipv6Prefix {
-    fn from(safe: SafeIpv6Prefix) -> Self {
-        safe.0
+impl PrefixCheck for ipnet::Ipv6Net {
+    #[inline]
+    fn meets_min_prefix(&self, min: u8) -> bool {
+        self.prefix_len() >= min
     }
 }
 
@@ -186,7 +164,7 @@ mod tests {
         assert_eq!(value, 64);
     }
 
-    // Tests for TryFrom<&[u8]> for Ipv6Prefix
+    // Tests for TryFrom<&[u8]> for Ipv{4,6}Prefix
     #[test]
     fn test_ipv6_prefix_try_from_bytes_valid() {
         assert!(Ipv6Prefix::try_from(b"0" as &[u8]).is_ok());
@@ -220,11 +198,5 @@ mod tests {
         assert_eq!(parse_raw_prefix(b"129", 128), None); // Above max
         assert_eq!(parse_raw_prefix(b"33", 32), None); // Above max
         assert_eq!(parse_raw_prefix(b"12a", 128), None); // Non-digit
-    }
-
-    #[test]
-    fn test_safe_prefix_try_from_bytes_invalid() {
-        assert!(SafeIpv4Prefix::try_from(b"0" as &[u8]).is_err());
-        assert!(SafeIpv6Prefix::try_from(b"0" as &[u8]).is_err());
     }
 }

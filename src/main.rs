@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright © 2025 zenofile <zenofile-sf6@unsha.re>
 
-#![feature(addr_parse_ascii, likely_unlikely, slice_split_once)]
+#![feature(addr_parse_ascii, cold_path, likely_unlikely, slice_split_once)]
 
 mod cidr;
 mod cli;
@@ -15,19 +15,20 @@ mod sandbox;
 use anyhow::{Context, Result};
 use clap::Parser;
 use core::hint::likely;
+use ipnet::{Ipv4Net, Ipv6Net};
 use std::{
     collections::{BTreeSet, HashMap},
     fs,
+    hint::cold_path,
     io::{IsTerminal, Write},
     path::PathBuf,
     process::{Command, Output},
     sync::Arc,
 };
-use tracing::{debug, error, info, warn};
+use tracing::{debug, error, info, trace, warn};
 use tracing_subscriber::prelude::*;
 
 use crate::{
-    cidr::{Ipv4Prefix, Ipv6Prefix, SafeIpv4Prefix, SafeIpv6Prefix},
     cli::{Action, Cli},
     config::{Config, IpVersion, resolve_fragment},
     istr::IStr,
@@ -47,36 +48,60 @@ struct AppContext {
 
 type NetSets<T> = HashMap<IStr, BTreeSet<T>>;
 
-#[inline]
-#[must_use]
-fn parse_v4_net_bytes(input: &[u8]) -> Option<ipnet::Ipv4Net> {
-    let (ip_bytes, prefix) = match input.split_once(|&b| b == b'/') {
-        Some((ip, p)) => (ip, SafeIpv4Prefix::try_from(p).ok()?.into()),
-        // Default is /32 for IPv4
-        None => (input, Ipv4Prefix::new(32)?),
-    };
+mod prefix_parser {
+    use ipnet::{Ipv4Net, Ipv6Net};
 
-    let ip = std::net::Ipv4Addr::parse_ascii(ip_bytes).ok()?;
-    ipnet::Ipv4Net::new(ip, prefix.as_u8()).ok()
+    use crate::cidr::{Ipv4Prefix, Ipv6Prefix};
+
+    pub type ParsedResult<T> = Option<T>;
+
+    #[allow(clippy::missing_panics_doc)]
+    #[must_use]
+    pub fn parse_v4_net_bytes(input: &[u8]) -> ParsedResult<Ipv4Net> {
+        let (ip_bytes, prefix) = match input.split_once(|&b| b == b'/') {
+            Some((ip, p)) => (
+                ip,
+                Ipv4Prefix::try_from(p)
+                    .inspect_err(|e| tracing::warn!("Failed to parse v4 prefix: {:?}", e))
+                    .ok()?,
+            ),
+            // Default is /32 for IPv4
+            None => (input, Ipv4Prefix::new(32).unwrap()),
+        };
+
+        let ip = std::net::Ipv4Addr::parse_ascii(ip_bytes).ok()?;
+        let net = Ipv4Net::new(ip, prefix.as_u8()).unwrap();
+
+        Some(net)
+    }
+
+    #[allow(clippy::missing_panics_doc)]
+    #[must_use]
+    pub fn parse_v6_net_bytes(input: &[u8]) -> ParsedResult<Ipv6Net> {
+        let (ip_bytes, prefix) = match input.split_once(|&b| b == b'/') {
+            Some((ip, p)) => (
+                ip,
+                Ipv6Prefix::try_from(p)
+                    .inspect_err(|e| tracing::warn!("Failed to parse v6 prefix: {:?}", e))
+                    .ok()?,
+            ),
+            // Default is /128 for IPv6
+            None => (input, Ipv6Prefix::new(128)?),
+        };
+
+        let ip = std::net::Ipv6Addr::parse_ascii(ip_bytes).ok()?;
+        let net = Ipv6Net::new(ip, prefix.as_u8()).unwrap();
+
+        Some(net)
+    }
 }
 
-#[inline]
-#[must_use]
-pub fn parse_v6_net_bytes(input: &[u8]) -> Option<ipnet::Ipv6Net> {
-    let (ip_bytes, prefix) = match input.split_once(|&b| b == b'/') {
-        Some((ip, p)) => (ip, SafeIpv6Prefix::try_from(p).ok()?.into()),
-        // Default is /128 for IPv6
-        None => (input, Ipv6Prefix::new(128)?),
-    };
-
-    let ip = std::net::Ipv6Addr::parse_ascii(ip_bytes).ok()?;
-    ipnet::Ipv6Net::new(ip, prefix.as_u8()).ok()
-}
+use prefix_parser::{ParsedResult, parse_v4_net_bytes, parse_v6_net_bytes};
 
 #[derive(Debug)]
 struct IpSets {
-    v4_sets: NetSets<ipnet::Ipv4Net>,
-    v6_sets: NetSets<ipnet::Ipv6Net>,
+    v4_sets: NetSets<Ipv4Net>,
+    v6_sets: NetSets<Ipv6Net>,
 }
 
 impl IpSets {
@@ -115,43 +140,70 @@ impl IpSets {
         set_name: &str,
         data: (&str, &[u8]),
         parser: F,
+        min_prefix_len: u8,
     ) where
-        T: Ord + Copy + std::fmt::Debug,
-        F: Fn(&[u8]) -> Option<T>,
+        T: Ord + Copy + std::fmt::Debug + cidr::PrefixCheck,
+        F: Fn(&[u8]) -> ParsedResult<T>,
     {
         let (url, content) = data;
+
+        // Only trust direct entries fully
+        let trusted_set = url.starts_with("direct:");
         let target_set = target_map.entry(IStr::from(set_name)).or_default();
 
+        let mut added = 0;
+        let mut invalid = 0;
+
         // Iterate over lines using byte splitting (zero allocation)
-        let (added, invalid) = content
+        for line_bytes in content
             .split(|&b| b == b'\n')
             .map(Self::strip_comment_and_trim_bytes)
             .filter(|s| !s.is_empty())
-            .fold((0, 0), |(mut added, mut invalid), line_bytes| {
-                if let Some(net) = parser(line_bytes) {
+        {
+            if let Some(net) = parser(line_bytes) {
+                if likely(trusted_set || net.meets_min_prefix(min_prefix_len)) {
                     if target_set.insert(net) {
                         added += 1;
                     }
                 } else {
+                    warn!(
+                        "Skipping non-trusted IP range: {}",
+                        String::from_utf8_lossy(line_bytes)
+                    );
                     invalid += 1;
-                    // We construct a String only for the debug log of an invalid entry
-                    if tracing::level_enabled!(tracing::Level::DEBUG) {
-                        debug!("Invalid IP entry: {}", String::from_utf8_lossy(line_bytes));
-                    }
                 }
-                (added, invalid)
-            });
+            } else {
+                cold_path();
+                invalid += 1;
+                if tracing::level_enabled!(tracing::Level::DEBUG) {
+                    debug!("Invalid IP entry: {}", String::from_utf8_lossy(line_bytes));
+                }
+            }
+        }
 
         Self::log_results(set_name, url, added, invalid);
     }
 
+    #[inline]
     fn process_content(&mut self, version: IpVersion, set_name: &str, data: (&str, &[u8])) {
         match version {
             IpVersion::V4 => {
-                Self::process_ips(&mut self.v4_sets, set_name, data, parse_v4_net_bytes);
+                Self::process_ips(
+                    &mut self.v4_sets,
+                    set_name,
+                    data,
+                    parse_v4_net_bytes,
+                    <Ipv4Net as cidr::PrefixCheck>::MIN_PREFIX_LEN_V4,
+                );
             }
             IpVersion::V6 => {
-                Self::process_ips(&mut self.v6_sets, set_name, data, parse_v6_net_bytes);
+                Self::process_ips(
+                    &mut self.v6_sets,
+                    set_name,
+                    data,
+                    parse_v6_net_bytes,
+                    <Ipv4Net as cidr::PrefixCheck>::MIN_PREFIX_LEN_V6,
+                );
             }
         }
     }
@@ -210,8 +262,29 @@ impl ThreadPool<DownloadJob, DownloadResult> {
 }
 
 fn download_url(timeout: u64, job: DownloadJob) -> DownloadResult {
+    use std::cell::RefCell;
+
+    fn extract_content_length_callback(
+        dst: &RefCell<Vec<u8>>,
+        url: &str,
+    ) -> impl FnMut(&[u8]) -> bool {
+        move |header| {
+            if let Ok(header_str) = std::str::from_utf8(header)
+                && header_str
+                    .to_ascii_lowercase()
+                    .starts_with("content-length: ")
+                && let Some(value) = header_str.split_once(':').map(|(_, v)| v.trim())
+                && let Ok(size) = value.parse::<usize>()
+            {
+                trace!("Content-Length for {}: {} Bytes", url, size);
+                dst.borrow_mut().reserve(size);
+            }
+            true
+        }
+    }
+
     let content = (|| -> Result<Vec<u8>> {
-        let mut dst = Vec::new();
+        let dst = RefCell::new(Vec::new());
         let mut easy = curl::easy::Easy::new();
 
         easy.url(&job.url)
@@ -225,9 +298,15 @@ fn download_url(timeout: u64, job: DownloadJob) -> DownloadResult {
 
         {
             let mut transfer = easy.transfer();
+
+            // Try to reserve enough space inside the target buffer upfront
+            transfer
+                .header_function(extract_content_length_callback(&dst, &job.url))
+                .context("Failed to set header function")?;
+
             transfer
                 .write_function(|data| {
-                    dst.extend_from_slice(data);
+                    dst.borrow_mut().extend_from_slice(data);
                     Ok(data.len())
                 })
                 .context("Failed to set write function")?;
@@ -244,9 +323,10 @@ fn download_url(timeout: u64, job: DownloadJob) -> DownloadResult {
             anyhow::bail!("HTTP request failed with status code: {}", response_code);
         }
 
-        debug!("Got {} bytes of data from {}", dst.len(), job.url);
+        let final_dst = dst.into_inner();
+        debug!("Got {} bytes of data from {}", final_dst.len(), job.url);
 
-        Ok(dst)
+        Ok(final_dst)
     })();
 
     DownloadResult {
@@ -782,15 +862,19 @@ mod tests {
     fn test_parse_v4_net_bytes_with_prefix() {
         let result = parse_v4_net_bytes(b"192.168.1.0/24");
         assert!(result.is_some());
+
         let net = result.unwrap();
         assert_eq!(net.addr(), std::net::Ipv4Addr::new(192, 168, 1, 0));
+        assert_eq!(net.prefix_len(), 24);
     }
 
     #[test]
     fn test_parse_v4_net_bytes_without_prefix() {
         let result = parse_v4_net_bytes(b"192.168.1.1");
         assert!(result.is_some());
+        let net = result.unwrap();
         // Should default to /32
+        assert_eq!(net.prefix_len(), 32);
     }
 
     #[test]
@@ -805,15 +889,20 @@ mod tests {
     fn test_parse_v6_net_bytes_with_prefix() {
         let result = parse_v6_net_bytes(b"2001:db8::/32");
         assert!(result.is_some());
+
         let net = result.unwrap();
         assert_eq!(net.addr().to_string(), "2001:db8::");
+        assert_eq!(net.prefix_len(), 32);
     }
 
     #[test]
     fn test_parse_v6_net_bytes_without_prefix() {
         let result = parse_v6_net_bytes(b"::1");
+
         assert!(result.is_some());
+        let net = result.unwrap();
         // Should default to /128
+        assert_eq!(net.prefix_len(), 128);
     }
 
     #[test]
@@ -829,6 +918,7 @@ mod tests {
         for i in 0..=128 {
             let prefix = Ipv6Prefix::new(i).unwrap();
             assert_eq!(prefix.as_u8(), i);
+
             let value: u8 = prefix.into();
             assert_eq!(value, i);
         }
@@ -839,9 +929,18 @@ mod tests {
         NetSets::default()
     }
 
+    // Implement PrefixCheck for u32 in tests (stub implementation)
+    impl cidr::PrefixCheck for u32 {
+        #[inline]
+        fn meets_min_prefix(&self, _min: u8) -> bool {
+            // For testing purposes, u32 values always "meet" prefix requirements
+            true
+        }
+    }
+
     // Helper parser for process_ips tests: parses ASCII lines into u32,
     // returns None on invalid input.
-    fn parse_u32_bytes(line: &[u8]) -> Option<u32> {
+    fn parse_u32_bytes(line: &[u8]) -> ParsedResult<u32> {
         std::str::from_utf8(line).ok()?.parse::<u32>().ok()
     }
 
@@ -849,7 +948,6 @@ mod tests {
     #[test]
     fn new_starts_with_empty_maps() {
         let sets = IpSets::new();
-
         assert!(sets.v4_sets.is_empty());
         assert!(sets.v6_sets.is_empty());
     }
@@ -897,7 +995,6 @@ mod tests {
     fn process_ips_inserts_valid_and_skips_invalid() {
         // Use a simple numeric type (u32) for T with a custom parser.
         let mut map = NetSets::<u32>::default();
-
         // Lines:
         //  "1"     -> valid
         //  "2"     -> valid
@@ -905,9 +1002,7 @@ mod tests {
         //  "2"     -> duplicate (should not increase set size)
         let content = b"1\n2\nbad\n2\n";
         let url = "memory://test";
-
-        IpSets::process_ips(&mut map, "test-set", (url, content), parse_u32_bytes);
-
+        IpSets::process_ips(&mut map, "test-set", (url, content), parse_u32_bytes, 0);
         let set = map.get("test-set").expect("set should exist");
         // Valid unique entries: {1, 2}
         assert_eq!(set.len(), 2);
@@ -920,11 +1015,9 @@ mod tests {
         let mut map = NetSets::<u32>::default();
         let content = b"42\n";
         let url = "memory://test";
-
         assert!(!map.contains_key("new-set"));
 
-        IpSets::process_ips(&mut map, "new-set", (url, content), parse_u32_bytes);
-
+        IpSets::process_ips(&mut map, "new-set", (url, content), parse_u32_bytes, 0);
         let set = map.get("new-set").expect("set should have been created");
         assert_eq!(set.len(), 1);
         assert!(set.contains(&42));
@@ -935,9 +1028,7 @@ mod tests {
         let mut map = NetSets::<u32>::default();
         let content = b"\n# full comment\n  \t # comment with leading ws\n7\n";
         let url = "memory://test";
-
-        IpSets::process_ips(&mut map, "comments", (url, content), parse_u32_bytes);
-
+        IpSets::process_ips(&mut map, "comments", (url, content), parse_u32_bytes, 0);
         let set = map.get("comments").expect("set should exist");
         assert_eq!(set.len(), 1);
         assert!(set.contains(&7));
@@ -956,7 +1047,6 @@ mod tests {
         let mut map: NetSets<String> = make_string_set_map();
         // Create an empty set entry under "empty"
         let _ = map.entry(IStr::from("empty")).or_default();
-
         let out = IpSets::get_formatted_generic(&map, "empty").expect("entry should exist");
         assert!(out.is_empty());
     }
@@ -965,8 +1055,7 @@ mod tests {
     fn get_formatted_generic_formats_single_entry_without_separator() {
         let mut map: NetSets<String> = make_string_set_map();
         let set = map.entry(IStr::from("single")).or_default();
-        set.insert("10.0.0.0/8".to_string());
-
+        set.insert("10.0.0.0/8".to_owned());
         let out = IpSets::get_formatted_generic(&map, "single").expect("entry should exist");
         assert_eq!(out, "10.0.0.0/8");
     }
@@ -975,13 +1064,10 @@ mod tests {
     fn get_formatted_generic_formats_multiple_entries_with_separator() {
         let mut map: NetSets<String> = make_string_set_map();
         let set = map.entry(IStr::from("multi")).or_default();
-
         // BTreeSet iteration order is sorted, so we can assert exact output.
-        set.insert("10.0.0.0/8".to_string());
-        set.insert("192.168.0.0/16".to_string());
-
+        set.insert("10.0.0.0/8".to_owned());
+        set.insert("192.168.0.0/16".to_owned());
         let out = IpSets::get_formatted_generic(&map, "multi").expect("entry should exist");
-
         let expected = "10.0.0.0/8,\n\t\t192.168.0.0/16";
         assert_eq!(out, expected);
     }
@@ -989,22 +1075,18 @@ mod tests {
     #[test]
     fn get_formatted_dispatches_on_version() {
         let mut sets = IpSets::new();
-
         // Feed content through the real pipeline so the correct net types are used.
         let v4_data = ("memory://v4", b"10.0.0.0/8\n" as &[u8]);
-        let v6_data = ("memory://v6", b"fd00::/8\n" as &[u8]);
-
+        let v6_data = ("memory://v6", b"fd00::/24\n" as &[u8]);
         sets.process_content(IpVersion::V4, "test", v4_data);
         sets.process_content(IpVersion::V6, "test", v6_data);
-
         let v4_str = sets
             .get_formatted(IpVersion::V4, "test")
             .expect("v4 set should exist");
         let v6_str = sets
             .get_formatted(IpVersion::V6, "test")
             .expect("v6 set should exist");
-
         assert_eq!(v4_str, "10.0.0.0/8");
-        assert_eq!(v6_str, "fd00::/8");
+        assert_eq!(v6_str, "fd00::/24");
     }
 }
