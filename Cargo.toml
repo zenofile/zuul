@@ -12,7 +12,7 @@ publish = false
 readme = "README.md"
 repository = "https://github.com/zenofile/zuul.git"
 rust-version = "1.94"
-version = "0.5.1"
+version = "0.6.0"
 
 [dependencies]
 anyhow = "1"
@@ -21,7 +21,11 @@ curl = { version = "0.4" }
 ipnet = "2"
 kanal = { version = "0.1", default-features = false }
 landlock = { version = "0.4", optional = true }
-minijinja = { version = "2", default-features = false, features = ["serde"] }
+minijinja = { version = "2", default-features = false, features = [
+    "builtins",
+    "serde",
+    "multi_template",
+] }
 regex = "1"
 serde = { version = "1", features = ["derive"] }
 serde-saphyr = "0.0.10"

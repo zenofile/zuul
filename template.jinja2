@@ -1,110 +1,100 @@
-table netdev blackhole {
-{% if ip_versions.v4 %}
-    set {{ set_names.whitelist }}_v4 {
-        type ipv4_addr
-        flags interval
-        auto-merge
-        {% if sets.whitelist_v4 %}
-        elements = { {{ sets.whitelist_v4 }} }
+{# Block 1: Static Sets (Whitelist, Blacklist) #}
+{% block sets_static %}
+    {% for name, set in sets|items %}
+        {% if set.is_static %}
+            set {{ name }} {
+                type {% if '_v4' in name %}ipv4_addr{% else %}ipv6_addr{% endif %};
+                flags interval;
+                auto-merge;
+                {% if set %}
+                    elements = { {{ set }} }
+                {% endif %}
+    }
         {% endif %}
-    }
-
-    set {{ set_names.blacklist}}_v4 {
-        type ipv4_addr
-        flags interval
-        auto-merge
-        {% if sets.blacklist_v4 %}
-        elements = { {{ sets.blacklist_v4 }} }
-        {% endif %}
-    }
-
-    set {{ set_names.abuselist }}_v4 {
-        type ipv4_addr
-        flags interval
-        auto-merge
-        {% if sets.abuselist_v4 %}
-        elements = { {{ sets.abuselist_v4 }} }
-        {% endif %}
-    }
-
-    set {{ set_names.country }}_v4 {
-        type ipv4_addr
-        flags interval
-        auto-merge
-        {% if sets.country_v4 %}
-        elements = { {{ sets.country_v4 }} }
-        {% endif %}
-    }
-
-    counter {{ set_names.whitelist }}_v4_cnt {}
-    counter {{ set_names.blacklist}}_v4_cnt {}
-    counter {{ set_names.abuselist }}_v4_cnt {}
-    counter {{ set_names.country }}_v4_cnt {}
-{% endif %}
-
-{% if ip_versions.v6 %}
-    set {{ set_names.whitelist }}_v6 {
-        type ipv6_addr
-        flags interval
-        auto-merge
-        {% if sets.whitelist_v6 %}
-        elements = { {{ sets.whitelist_v6 }} }
-        {% endif %}
-    }
-
-    set {{ set_names.blacklist}}_v6 {
-        type ipv6_addr
-        flags interval
-        auto-merge
-        {% if sets.blacklist_v6 %}
-        elements = { {{ sets.blacklist_v6 }} }
-        {% endif %}
-    }
-
-    set {{ set_names.abuselist }}_v6 {
-        type ipv6_addr
-        flags interval
-        auto-merge
-        {% if sets.abuselist_v6 %}
-        elements = { {{ sets.abuselist_v6 }} }
-        {% endif %}
-    }
-
-    set {{ set_names.country }}_v6 {
-        type ipv6_addr
-        flags interval
-        auto-merge
-        {% if sets.country_v6 %}
-        elements = { {{ sets.country_v6 }} }
-        {% endif %}
-    }
-
-    counter {{ set_names.whitelist }}_v6_cnt {}
-    counter {{ set_names.blacklist}}_v6_cnt {}
-    counter {{ set_names.abuselist }}_v6_cnt {}
-    counter {{ set_names.country }}_v6_cnt {}
-{% endif %}
-
-    {% for iface in iifname %}
-    chain input_{{ iface }} {
-        type filter hook ingress device {{ iface }} priority -190; policy {{ default_policy }};
-
-    {% if ip_versions.v4 %}
-        ip saddr @{{ set_names.whitelist }}_v4 counter name {{ set_names.whitelist }}_v4_cnt accept
-        ip saddr @{{ set_names.blacklist}}_v4 counter name {{ set_names.blacklist}}_v4_cnt goto log-debug
-        ip saddr @{{ set_names.abuselist }}_v4 counter name {{ set_names.abuselist }}_v4_cnt goto log-debug
-        ip saddr @{{ set_names.country }}_v4 counter name {{ set_names.country }}_v4_cnt goto log-debug
-    {% endif %}
-
-    {% if ip_versions.v6 %}
-        ip6 saddr @{{ set_names.whitelist }}_v6 counter name {{ set_names.whitelist }}_v6_cnt accept
-        ip6 saddr @{{ set_names.blacklist}}_v6 counter name {{ set_names.blacklist }}_v6_cnt goto log-debug
-        ip6 saddr @{{ set_names.abuselist }}_v6 counter name {{ set_names.abuselist }}_v6_cnt goto log-debug
-        ip6 saddr @{{ set_names.country }}_v6 counter name {{ set_names.country }}_v6_cnt goto log-debug
-    {% endif %}
-    }
-
     {% endfor %}
+{% endblock %}
+
+{# Block 2: Dynamic Sets (Abuselist, Country) - with suffix #}
+{% block sets_dynamic %}
+    {% for name, set in sets|items %}
+        {% if not set.is_static %}
+        set {{ name }} {
+            type {% if '_v4' in name %}ipv4_addr{% else %}ipv6_addr{% endif %};
+            flags interval;
+            auto-merge;
+            {% if set %}
+                elements = { {{ set }} }
+            {% endif %}
+        }
+        {% endif %}
+    {% endfor %}
+{% endblock %}
+
+{# Block 3: Counters - created once, no suffix binding, persistent #}
+{% block counters %}
+    {% if ip_versions.v4 %}
+        {% for base in [set_names.whitelist, set_names.blacklist, set_names.abuselist, set_names.country] %}
+            counter {{ base }}_v4_cnt {}
+        {% endfor %}
+    {% endif %}
+    {% if ip_versions.v6 %}
+        {% for base in [set_names.whitelist, set_names.blacklist, set_names.abuselist, set_names.country] %}
+            counter {{ base }}_v6_cnt {}
+        {% endfor %}
+    {% endif %}
+{% endblock %}
+
+{# Block 4: Chain Logic #}
+{% block chain_logic %}
+    {% for iface in iifname %}
+    chain ingress_{{ iface }} {
+        type filter hook ingress device "{{ iface }}" priority -190; policy {{ default_policy }};
+        jump validation
+    }
+    {% endfor %}
+
+    {# Define a sub-block we can target specifically during refresh #}
+    {% block chain_validation %}
+        chain validation {
+            iifname "lo" accept
+
+            {% if ip_versions.v4 %}
+                {# Whitelist #}
+                {% set wl_logical = set_names.whitelist ~ "_v4" %}
+                {% set wl_actual = set_mappings[wl_logical] %}
+                {% if sets[wl_actual] is defined %}
+                    ip saddr @{{ wl_actual }} counter name {{ set_names.whitelist }}_v4_cnt accept
+                {% endif %}
+
+                {# Deny Sets #}
+                {% for base in [set_names.blacklist, set_names.abuselist, set_names.country] %}
+                    {% set logical = base ~ "_v4" %}
+                    {% set actual = set_mappings[logical] %}
+                    {% if sets[actual] is defined %}
+                        ip saddr @{{ actual }} counter name {{ base }}_v4_cnt goto log-debug
+                    {% endif %}
+                {% endfor %}
+            {% endif %}
+
+            {% if ip_versions.v6 %}
+                {# Whitelist #}
+                {% set wl_logical = set_names.whitelist ~ "_v6" %}
+                {% set wl_actual = set_mappings[wl_logical] %}
+                {% if sets[wl_actual] is defined %}
+                    ip6 saddr @{{ wl_actual }} counter name {{ set_names.whitelist }}_v6_cnt accept
+                {% endif %}
+
+                {# Deny Sets #}
+                {% for base in [set_names.blacklist, set_names.abuselist, set_names.country] %}
+                    {% set logical = base ~ "_v6" %}
+                    {% set actual = set_mappings[logical] %}
+                    {% if sets[actual] is defined %}
+                        ip6 saddr @{{ actual }} counter name {{ base }}_v6_cnt goto log-debug
+                    {% endif %}
+                {% endfor %}
+            {% endif %}
+        }
+    {% endblock %}
 
     chain log-debug {
     {% if logging.enabled %}
@@ -116,4 +106,14 @@ table netdev blackhole {
     {% endif %}
         {{ block_policy }}
     }
-}
+{% endblock %}
+
+{# Main: Full Configuration, combine all blocks #}
+{% block full_config %}
+    table netdev blackhole {
+        {{ self.sets_static() }}
+        {{ self.sets_dynamic() }}
+        {{ self.counters() }}
+        {{ self.chain_logic() }}
+    }
+{% endblock %}

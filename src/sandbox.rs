@@ -8,7 +8,6 @@ use landlock::{
     ABI, Access, AccessFs, AccessNet, Compatible, NetPort, Ruleset, RulesetAttr,
     RulesetCreatedAttr, RulesetError, RulesetStatus, Scope, path_beneath_rules,
 };
-use tracing::{info, warn};
 
 /// The enforcement status of the sandbox.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -118,12 +117,6 @@ where
         RulesetStatus::PartiallyEnforced => Status::Partial,
         RulesetStatus::NotEnforced => Status::None,
     };
-
-    match public_status {
-        Status::Full => info!("Landlock sandbox fully active."),
-        Status::Partial => warn!("Landlock sandbox partially enforced."),
-        Status::None => warn!("Landlock sandbox NOT enforced."),
-    }
 
     Ok(public_status)
 }
