@@ -53,14 +53,23 @@ where
         "/dev/zero",
     ];
     let write_paths = ["/dev/null"];
+    let temp_paths = ["/tmp"];
 
-    // DNS and HTTPS default ports
+    // DNS and HTTPS default ports, this might be too restrictive
     let allowed_ports = [53, 443];
 
     // Define
     let read_exec = AccessFs::Execute | AccessFs::ReadFile | AccessFs::ReadDir;
     let read_only = AccessFs::ReadFile | AccessFs::ReadDir;
     let read_write = AccessFs::ReadFile | AccessFs::WriteFile;
+    let temp_file = AccessFs::MakeDir
+        | AccessFs::MakeReg
+        | AccessFs::ReadDir
+        | AccessFs::ReadFile
+        | AccessFs::RemoveDir
+        | AccessFs::RemoveFile
+        | AccessFs::Truncate
+        | AccessFs::WriteFile;
 
     // Initialize
     let ruleset = Ruleset::default()
@@ -94,6 +103,14 @@ where
                 .copied()
                 .filter(|p| Path::new(p).exists()),
             read_write,
+        ))?
+        // Temp path
+        .add_rules(path_beneath_rules(
+            temp_paths
+                .iter()
+                .copied()
+                .filter(|p| Path::new(p).exists()),
+            temp_file,
         ))?
         // User Provided Paths
         .add_rules(path_beneath_rules(

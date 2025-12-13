@@ -1,0 +1,16 @@
+# NET:
+#   v4:
+#     enabled: yes 
+#     min_prefix: 8
+#   v6:
+#     enabled: yes
+#     min_prefix: 16
+
+## Dynamic list: ASNs, local and remote source support
+ABUSELIST:
+  v4:
+    - url: file:///tmp/test_data_v4.txt
+      min_prefix: 0
+  v6:
+    - url: file:///tmp/test_data_v6.txt
+      min_prefix: 0

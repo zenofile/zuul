@@ -13,8 +13,8 @@ use core::hint::likely;
 use std::{
     collections::{BTreeSet, HashMap},
     fs,
-    hint::cold_path,
-    io::{IsTerminal, Write},
+    hint::{cold_path, unlikely},
+    io::{BufRead, BufReader, Cursor, IsTerminal, Write},
     path::PathBuf,
     process::{Command, Output},
     sync::Arc,
@@ -48,10 +48,26 @@ struct AppContext {
     print_stdout: bool,
 }
 
-#[derive(Debug, Clone, Copy)]
-pub struct ProcessingInput<'a> {
+#[derive(Debug, Clone)]
+struct DownloadJob {
+    url: IStr,
+}
+
+#[derive(Debug)]
+enum InputSource {
+    Temp(tempfile::NamedTempFile),
+    Local(PathBuf),
+}
+
+#[derive(Debug)]
+struct DownloadResult {
+    url: IStr,
+    source: Result<InputSource>,
+}
+
+struct ProcessingInput<'a, R> {
     pub source: &'a str,
-    pub content: &'a [u8],
+    pub reader: R,
     pub min_prefix: u8,
 }
 
@@ -230,29 +246,164 @@ impl IpSets {
         debug!("Set {}: Added {} new entries from {}", set_name, added, url);
     }
 
-    fn process_ips<T, F>(
+    #[allow(dead_code)]
+    fn process_ips_reuse<R, T, F>(
         target_map: &mut NetSets<T>,
         set_name: &str,
-        input: ProcessingInput,
+        mut input: ProcessingInput<R>,
         parser: F,
     ) where
+        R: BufRead,
         T: Ord + Copy + std::fmt::Debug + cidr::PrefixCheck,
         F: Fn(&[u8]) -> ParsedResult<T>,
     {
         // Only trust direct entries fully
-        let trusted_set = input.source.starts_with("direct:");
+        let trusted_set = input.source.starts_with("inline:");
         let set = Arc::make_mut(target_map.entry(IStr::from(set_name)).or_default());
-
         let mut added = 0;
         let mut invalid = 0;
 
-        // Iterate over lines using byte splitting (zero allocation)
-        for line_bytes in input
-            .content
-            .split(|&b| b == b'\n')
-            .map(Self::strip_comment_and_trim_bytes)
-            .filter(|s| !s.is_empty())
-        {
+        // Reusable buffer for lines that span multiple chunks
+        const MAX_LINE_LEN: usize = 4096;
+        let mut line_buffer = Vec::with_capacity(MAX_LINE_LEN);
+        let mut discarding = false;
+
+        loop {
+            // Use fill_buf to peek at data without consuming it immediately
+            let buf = match input.reader.fill_buf() {
+                Ok([]) => break, // EOF
+                Ok(b) => b,
+                Err(e) => {
+                    warn!("Error reading from {}: {}", input.source, e);
+                    break;
+                }
+            };
+
+            // Find the first newline in the current chunk
+            let (consume_len, found_newline) = buf
+                .iter()
+                .position(|&b| b == b'\n')
+                .map_or((buf.len(), false), |i| (i + 1, true));
+
+            // Calculate if this chunk would exceed the limit
+            // saturating_add ensures we don't wrap around on massive lines
+            let current_len = line_buffer.len();
+            let will_exceed = current_len.saturating_add(consume_len) > MAX_LINE_LEN;
+
+            if discarding {
+                // If we are already discarding, we just consume bytes until we find a newline
+                if found_newline {
+                    discarding = false;
+                }
+            } else if will_exceed {
+                // The line is too long. Transition to discarding mode.
+                discarding = true;
+                line_buffer.clear();
+
+                // If we found a newline in this chunk, the next chunk starts a fresh line
+                if found_newline {
+                    discarding = false;
+                }
+
+                warn!("Line too long in {}, discarding", input.source);
+            } else {
+                // The line (so far) is within limits
+                if found_newline {
+                    // We have a complete line.
+                    // Optimization: If line_buffer is empty, the whole line is in `buf`.
+                    // We can use the slice directly (zero-copy) instead of copying to line_buffer.
+                    let line_slice = if line_buffer.is_empty() {
+                        &buf[..consume_len]
+                    } else {
+                        line_buffer.extend_from_slice(&buf[..consume_len]);
+                        &line_buffer
+                    };
+
+                    // --- Processing Logic ---
+                    let line_bytes = Self::strip_comment_and_trim_bytes(line_slice);
+                    if !line_bytes.is_empty() {
+                        if let Some(net) = parser(line_bytes) {
+                            if likely(trusted_set || net.meets_min_prefix(input.min_prefix)) {
+                                if set.insert(net) {
+                                    added += 1;
+                                }
+                            } else {
+                                warn!(
+                                    "Skipping non-trusted IP range: {}",
+                                    String::from_utf8_lossy(line_bytes)
+                                );
+                                invalid += 1;
+                            }
+                        } else {
+                            cold_path();
+                            invalid += 1;
+                            if tracing::level_enabled!(tracing::Level::DEBUG) {
+                                debug!("Invalid IP entry: {}", String::from_utf8_lossy(line_bytes));
+                            }
+                        }
+                    }
+                    line_buffer.clear();
+                } else {
+                    // Line continues into the next chunk, buffer it
+                    line_buffer.extend_from_slice(&buf[..consume_len]);
+                }
+            }
+
+            // Advance the reader past the processed bytes
+            input.reader.consume(consume_len);
+        }
+
+        Self::log_results(set_name, input.source, added, invalid);
+    }
+
+    #[allow(dead_code)]
+    fn process_ips<R, T, F>(
+        target_map: &mut NetSets<T>,
+        set_name: &str,
+        mut input: ProcessingInput<R>,
+        parser: F,
+    ) where
+        R: BufRead,
+        T: Ord + Copy + std::fmt::Debug + cidr::PrefixCheck,
+        F: Fn(&[u8]) -> ParsedResult<T>,
+    {
+        let trusted_set = input.source.starts_with("inline:");
+        let set = Arc::make_mut(target_map.entry(IStr::from(set_name)).or_default());
+        let mut added = 0;
+        let mut invalid = 0;
+
+        const MAX_LINE_LEN: u64 = 4096;
+
+        // We keep a buffer for the current line
+        let mut line_buffer = Vec::new();
+
+        loop {
+            line_buffer.clear();
+            let mut limit_reader = std::io::Read::take(&mut input.reader, MAX_LINE_LEN);
+
+            let bytes_read = match limit_reader.read_until(b'\n', &mut line_buffer) {
+                Ok(0) => break, // EOF
+                Ok(n) => n,
+                Err(e) => {
+                    cold_path();
+                    warn!("Error reading from {}: {}", input.source, e);
+                    break;
+                }
+            };
+
+            if unlikely(bytes_read as u64 == MAX_LINE_LEN && line_buffer.last() != Some(&b'\n')) {
+                warn!("Line too long in {}, discarding", input.source);
+
+                let mut sink = Vec::new(); // or a specialized discard buffer
+                let _ = input.reader.read_until(b'\n', &mut sink);
+                continue;
+            }
+
+            let line_bytes = Self::strip_comment_and_trim_bytes(&line_buffer);
+            if line_bytes.is_empty() {
+                continue;
+            }
+
             if let Some(net) = parser(line_bytes) {
                 if likely(trusted_set || net.meets_min_prefix(input.min_prefix)) {
                     if set.insert(net) {
@@ -278,7 +429,12 @@ impl IpSets {
     }
 
     #[inline]
-    fn process_content(&mut self, version: IpVersion, set_name: &str, input: ProcessingInput) {
+    fn process_content<R: BufRead>(
+        &mut self,
+        version: IpVersion,
+        set_name: &str,
+        input: ProcessingInput<R>,
+    ) {
         match version {
             IpVersion::V4 => {
                 Self::process_ips(&mut self.v4_sets, set_name, input, parse_v4_net_bytes);
@@ -288,17 +444,6 @@ impl IpSets {
             }
         }
     }
-}
-
-#[derive(Debug, Clone)]
-struct DownloadJob {
-    url: IStr,
-}
-
-#[derive(Debug)]
-struct DownloadResult {
-    url: IStr,
-    content: Result<Vec<u8>>,
 }
 
 // Convenience constructor for downloads
@@ -313,53 +458,52 @@ impl ThreadPool<DownloadJob, DownloadResult> {
 }
 
 fn download_url(timeout: u64, job: DownloadJob) -> DownloadResult {
-    use std::cell::RefCell;
+    use std::{
+        cell::RefCell,
+        io::{Seek, SeekFrom},
+    };
 
-    fn extract_content_length_callback(
-        dst: &RefCell<Vec<u8>>,
-        url: &str,
-    ) -> impl FnMut(&[u8]) -> bool {
-        move |header| {
-            if let Ok(header_str) = std::str::from_utf8(header)
-                && header_str
-                    .to_ascii_lowercase()
-                    .starts_with("content-length: ")
-                && let Some(value) = header_str.split_once(':').map(|(_, v)| v.trim())
-                && let Ok(size) = value.parse::<usize>()
-            {
-                trace!("Content-Length for {}: {} Bytes", url, size);
-                dst.borrow_mut().reserve(size);
-            }
-            true
+    // Create a temporary file
+    let temp_file = match tempfile::NamedTempFile::new() {
+        Ok(f) => f,
+        Err(e) => {
+            return DownloadResult {
+                url: job.url,
+                source: Err(anyhow::Error::from(e)),
+            };
         }
-    }
+    };
 
-    let content = (|| -> Result<Vec<u8>> {
-        // Handle everything else (http{,s})
-        let dst = RefCell::new(Vec::new());
+    trace!(
+        "Writing to file {} for {}",
+        temp_file.path().display(),
+        job.url
+    );
+
+    // We wrap the file in a RefCell to use it within the curl callbacks
+    let dst = RefCell::new(temp_file);
+
+    let result = (|| -> Result<()> {
         let mut easy = curl::easy::Easy::new();
 
         easy.url(&job.url)
             .context(format!("Failed to set URL: {}", job.url))?;
         easy.timeout(std::time::Duration::from_secs(timeout))
             .context("Failed to set timeout")?;
-        easy.useragent("Mozilla/5.0 (compatible; zuul/0.1.0)")
+        easy.useragent("Mozilla/5.0 (compatible; zuul/0.6.0)")
             .context("Failed to set user agent")?;
         easy.follow_location(true)
             .context("Failed to enable follow location")?;
 
         {
             let mut transfer = easy.transfer();
-
-            // Try to reserve enough space inside the target buffer upfront
-            transfer
-                .header_function(extract_content_length_callback(&dst, &job.url))
-                .context("Failed to set header function")?;
-
+            // Write function now writes to the file
             transfer
                 .write_function(|data| {
-                    dst.borrow_mut().extend_from_slice(data);
-                    Ok(data.len())
+                    let mut file = dst.borrow_mut();
+                    file.write_all(data)
+                        .map(|()| data.len())
+                        .map_err(|_| curl::easy::WriteError::Pause)
                 })
                 .context("Failed to set write function")?;
 
@@ -375,15 +519,21 @@ fn download_url(timeout: u64, job: DownloadJob) -> DownloadResult {
             anyhow::bail!("HTTP request failed with status code: {}", response_code);
         }
 
-        let final_dst = dst.into_inner();
-        debug!("Got {} bytes of data from {}", final_dst.len(), job.url);
-
-        Ok(final_dst)
+        Ok(())
     })();
 
     DownloadResult {
         url: job.url,
-        content,
+        // We use and_then because seeking might fail
+        source: result.and_then(|()| {
+            let mut file = dst.into_inner();
+
+            // Rewind the file before returning it
+            file.seek(SeekFrom::Start(0))
+                .context("Failed to seek to start of downloaded file")?;
+
+            Ok(InputSource::Temp(file))
+        }),
     }
 }
 
@@ -408,22 +558,18 @@ fn start_downloads(
     rx
 }
 
-// Slurp, improve in the future
 fn process_local_files<I, S>(urls: I) -> impl Iterator<Item = DownloadResult>
 where
     I: IntoIterator<Item = S>,
     S: Into<IStr>,
 {
     urls.into_iter().map(|url| {
-        // Shadow to IStr
         let url = Into::<IStr>::into(url);
-
-        let content = url.strip_prefix("file://").map_or_else(
+        let source = url.strip_prefix("file://").map_or_else(
             || Err(anyhow::anyhow!("Not a file:// URL")),
-            |path| std::fs::read(path).map_err(anyhow::Error::from),
+            |path| Ok(InputSource::Local(PathBuf::from(path))),
         );
-
-        DownloadResult { url, content }
+        DownloadResult { url, source }
     })
 }
 
@@ -454,7 +600,7 @@ fn generate_abuselist_urls<S: AsRef<str>>(entries: &[ListEntry], tmpl_urls: &[S]
         let (raw_str, custom_prefix) = entry.as_parts();
         let trimmed = raw_str.trim();
 
-        // Direct URLs
+        // inline URLs
         if trimmed.starts_with("https://") {
             urls.push(UrlEntry::Http {
                 url: IStr::from(trimmed),
@@ -518,6 +664,7 @@ fn render_template(
         fs::read_to_string(&context.template).context("Failed to read template file")?;
 
     let mut jinja = minijinja::Environment::new();
+    jinja.set_auto_escape_callback(|_| minijinja::AutoEscape::None);
     jinja.set_trim_blocks(true);
     jinja.set_lstrip_blocks(true);
     jinja.add_template("zuul", &template_content)?;
@@ -593,7 +740,7 @@ fn collect_ip_sets(context: &AppContext, suffix: u64) -> IpSets {
             IpVersion::V6 => cfg.net.v6.min_prefix,
         };
 
-        // Direct ip entry processing
+        // inline ip entry processing
         // Whitelist
         if let Some(entries) = cfg.whitelist.as_ref().and_then(|m| m.get(&ip_version)) {
             let set_name = format!("{}_{}", cfg.set_names.whitelist, ip_version);
@@ -602,9 +749,10 @@ fn collect_ip_sets(context: &AppContext, suffix: u64) -> IpSets {
                 .map(|e| e.as_parts().0)
                 .collect::<Vec<_>>()
                 .join("\n");
+
             let input = ProcessingInput {
-                source: "direct:WHITELIST",
-                content: nets.as_bytes(),
+                source: "inline:WHITELIST",
+                reader: Cursor::new(nets.into_bytes()),
                 min_prefix,
             };
 
@@ -620,8 +768,8 @@ fn collect_ip_sets(context: &AppContext, suffix: u64) -> IpSets {
                 .collect::<Vec<_>>()
                 .join("\n");
             let input = ProcessingInput {
-                source: "direct:BLACKLIST",
-                content: nets.as_bytes(),
+                source: "inline:BLACKLIST",
+                reader: Cursor::new(nets.into_bytes()),
                 min_prefix,
             };
 
@@ -680,26 +828,37 @@ fn collect_ip_sets(context: &AppContext, suffix: u64) -> IpSets {
     // Start (consume) all downloads. Returns immediately with a receiver
     let rx = start_downloads(pool, http_urls);
 
-    let mut process_result = |result: DownloadResult| {
-        if let Ok(text) = &result.content
-            && let Some((set_name, version, override_prefix)) = url_map.remove(&result.url)
-        {
-            if context.verbosity >= 2 {
-                #[allow(clippy::naive_bytecount)]
-                let count = text.iter().filter(|&&b| b == b'\n').count() + 1;
-                debug!("Processing {} lines for {}", count, set_name);
-            }
-            let input = ProcessingInput {
-                source: &result.url,
-                content: text,
-                min_prefix: override_prefix.unwrap_or(match version {
-                    IpVersion::V4 => cfg.net.v4.min_prefix,
-                    IpVersion::V6 => cfg.net.v6.min_prefix,
-                }),
-            };
+    let mut process_result = |result: DownloadResult| match result.source {
+        Ok(source) => {
+            if let Some((set_name, version, override_prefix)) = url_map.remove(&result.url) {
+                let reader: Box<dyn BufRead> = match &source {
+                    InputSource::Temp(file) => Box::new(BufReader::new(file)),
+                    InputSource::Local(path) => match std::fs::File::open(path) {
+                        Ok(f) => Box::new(BufReader::new(f)),
+                        Err(e) => {
+                            warn!("Failed to open file {}: {}", path.display(), e);
+                            return;
+                        }
+                    },
+                };
 
-            sets.process_content(version, &set_name, input);
-        } else if let Err(e) = &result.content {
+                if context.verbosity >= 2 {
+                    debug!("Processing data for {}", set_name);
+                }
+
+                let input = ProcessingInput {
+                    source: &result.url,
+                    reader,
+                    min_prefix: override_prefix.unwrap_or(match version {
+                        IpVersion::V4 => cfg.net.v4.min_prefix,
+                        IpVersion::V6 => cfg.net.v6.min_prefix,
+                    }),
+                };
+
+                sets.process_content(version, &set_name, input);
+            }
+        }
+        Err(e) => {
             warn!("Failed to process {}: {}", result.url, e);
         }
     };
@@ -1027,7 +1186,6 @@ fn main() -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cidr::Ipv6Prefix;
 
     // Tests for parse_v4_net_bytes
     #[test]
@@ -1088,7 +1246,7 @@ mod tests {
     #[test]
     fn test_ipv6_prefix_roundtrip() {
         for i in 0..=128 {
-            let prefix = Ipv6Prefix::new(i).unwrap();
+            let prefix = cidr::Ipv6Prefix::new(i).unwrap();
             assert_eq!(prefix.as_u8(), i);
 
             let value: u8 = prefix.into();
@@ -1158,24 +1316,25 @@ mod tests {
     }
 
     const MIN_PREFIX_LEN: u8 = 0;
-    // Tests for process_ips
     #[test]
     fn process_ips_inserts_valid_and_skips_invalid() {
         // Use a simple numeric type (u32) for T with a custom parser.
         let mut map = NetSets::<u32>::default();
         // Lines:
-        //  "1"     -> valid
-        //  "2"     -> valid
-        //  "bad"   -> invalid
-        //  "2"     -> duplicate (should not increase set size)
+        // "1" -> valid
+        // "2" -> valid
+        // "bad" -> invalid
+        // "2" -> duplicate (should not increase set size)
         let content = b"1\n2\nbad\n2\n";
         let source = "memory://test";
+        let cursor = Cursor::new(content.to_vec());
         let input = ProcessingInput {
             source,
-            content,
+            reader: cursor,
             min_prefix: MIN_PREFIX_LEN,
         };
         IpSets::process_ips(&mut map, "test-set", input, parse_u32_bytes);
+
         let set = map.get("test-set").expect("set should exist");
         // Valid unique entries: {1, 2}
         assert_eq!(set.len(), 2);
@@ -1189,10 +1348,10 @@ mod tests {
         let content = b"42\n";
         let source = "memory://test";
         assert!(!map.contains_key("new-set"));
-
+        let cursor = Cursor::new(content.to_vec());
         let input = ProcessingInput {
             source,
-            content,
+            reader: cursor,
             min_prefix: MIN_PREFIX_LEN,
         };
         IpSets::process_ips(&mut map, "new-set", input, parse_u32_bytes);
@@ -1204,11 +1363,12 @@ mod tests {
     #[test]
     fn process_ips_ignores_blank_and_comment_lines() {
         let mut map = NetSets::<u32>::default();
-        let content = b"\n# full comment\n  \t # comment with leading ws\n7\n";
+        let content = b"\n# full comment\n \t # comment with leading ws\n7\n";
         let source = "memory://test";
+        let cursor = Cursor::new(content.to_vec());
         let input = ProcessingInput {
             source,
-            content,
+            reader: cursor,
             min_prefix: MIN_PREFIX_LEN,
         };
         IpSets::process_ips(&mut map, "comments", input, parse_u32_bytes);

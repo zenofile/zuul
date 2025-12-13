@@ -7,7 +7,7 @@
                 flags interval;
                 auto-merge;
                 {% if set %}
-                    elements = { {{ set }} }
+                    elements = { {{ set|safe }} }
                 {% endif %}
     }
         {% endif %}
@@ -23,7 +23,7 @@
             flags interval;
             auto-merge;
             {% if set %}
-                elements = { {{ set }} }
+                elements = { {{ set|safe }} }
             {% endif %}
         }
         {% endif %}
