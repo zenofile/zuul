@@ -1,4 +1,10 @@
-#![feature(addr_parse_ascii, cold_path, likely_unlikely, slice_split_once)]
+#![feature(
+    addr_parse_ascii,
+    cold_path,
+    likely_unlikely,
+    slice_split_once,
+    slice_partition_dedup
+)]
 
 mod cidr;
 mod cli;
@@ -11,7 +17,7 @@ mod sandbox;
 
 use core::hint::likely;
 use std::{
-    collections::{BTreeSet, HashMap},
+    collections::HashMap,
     fs,
     hint::{cold_path, unlikely},
     io::{BufRead, BufReader, Cursor, IsTerminal, Write},
@@ -35,7 +41,9 @@ use crate::{
     threadpool::ThreadPool,
 };
 
-type NetSets<T> = HashMap<IStr, Arc<BTreeSet<T>>>;
+// BTreeMap is just too slow, sorry
+type NetSet<T> = Vec<T>;
+type NetSets<T> = HashMap<IStr, Arc<NetSet<T>>>;
 
 #[derive(Debug)]
 struct AppContext {
@@ -79,7 +87,7 @@ enum SetType {
 
 #[derive(Debug, Clone)]
 struct LazyIpSet<T> {
-    data: Arc<BTreeSet<T>>,
+    data: Arc<NetSet<T>>,
     set_type: SetType,
 }
 
@@ -224,7 +232,6 @@ impl IpSets {
         }
     }
 
-    #[inline]
     #[must_use]
     fn strip_comment_and_trim_bytes(line: &[u8]) -> &[u8] {
         let text = line
@@ -233,6 +240,35 @@ impl IpSets {
             .map_or(line, |pos| &line[..pos]);
 
         text.trim_ascii()
+    }
+
+    fn discard_line<R: BufRead>(reader: &mut R, source: Option<&str>) {
+        loop {
+            let buf = match reader.fill_buf() {
+                Ok(b) => b,
+                Err(ref e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
+                Err(e) => {
+                    if let Some(file) = source {
+                        error!("Error discarding line in {}: {}", file, e);
+                    } else {
+                        error!("Error discarding line {}", e);
+                    }
+                    break;
+                }
+            };
+
+            if buf.is_empty() {
+                break; // EOF reached
+            }
+
+            let len = buf.len();
+            // Check if the newline exists in the current chunk
+            if let Some(idx) = buf.iter().position(|&b| b == b'\n') {
+                reader.consume(idx + 1);
+                break;
+            }
+            reader.consume(len);
+        }
     }
 
     #[inline]
@@ -246,118 +282,7 @@ impl IpSets {
         debug!("Set {}: Added {} new entries from {}", set_name, added, url);
     }
 
-    #[allow(dead_code)]
-    fn process_ips_reuse<R, T, F>(
-        target_map: &mut NetSets<T>,
-        set_name: &str,
-        mut input: ProcessingInput<R>,
-        parser: F,
-    ) where
-        R: BufRead,
-        T: Ord + Copy + std::fmt::Debug + cidr::PrefixCheck,
-        F: Fn(&[u8]) -> ParsedResult<T>,
-    {
-        // Only trust direct entries fully
-        let trusted_set = input.source.starts_with("inline:");
-        let set = Arc::make_mut(target_map.entry(IStr::from(set_name)).or_default());
-        let mut added = 0;
-        let mut invalid = 0;
-
-        // Reusable buffer for lines that span multiple chunks
-        const MAX_LINE_LEN: usize = 4096;
-        let mut line_buffer = Vec::with_capacity(MAX_LINE_LEN);
-        let mut discarding = false;
-
-        loop {
-            // Use fill_buf to peek at data without consuming it immediately
-            let buf = match input.reader.fill_buf() {
-                Ok([]) => break, // EOF
-                Ok(b) => b,
-                Err(e) => {
-                    warn!("Error reading from {}: {}", input.source, e);
-                    break;
-                }
-            };
-
-            // Find the first newline in the current chunk
-            let (consume_len, found_newline) = buf
-                .iter()
-                .position(|&b| b == b'\n')
-                .map_or((buf.len(), false), |i| (i + 1, true));
-
-            // Calculate if this chunk would exceed the limit
-            // saturating_add ensures we don't wrap around on massive lines
-            let current_len = line_buffer.len();
-            let will_exceed = current_len.saturating_add(consume_len) > MAX_LINE_LEN;
-
-            if discarding {
-                // If we are already discarding, we just consume bytes until we find a newline
-                if found_newline {
-                    discarding = false;
-                }
-            } else if will_exceed {
-                // The line is too long. Transition to discarding mode.
-                discarding = true;
-                line_buffer.clear();
-
-                // If we found a newline in this chunk, the next chunk starts a fresh line
-                if found_newline {
-                    discarding = false;
-                }
-
-                warn!("Line too long in {}, discarding", input.source);
-            } else {
-                // The line (so far) is within limits
-                if found_newline {
-                    // We have a complete line.
-                    // Optimization: If line_buffer is empty, the whole line is in `buf`.
-                    // We can use the slice directly (zero-copy) instead of copying to line_buffer.
-                    let line_slice = if line_buffer.is_empty() {
-                        &buf[..consume_len]
-                    } else {
-                        line_buffer.extend_from_slice(&buf[..consume_len]);
-                        &line_buffer
-                    };
-
-                    // --- Processing Logic ---
-                    let line_bytes = Self::strip_comment_and_trim_bytes(line_slice);
-                    if !line_bytes.is_empty() {
-                        if let Some(net) = parser(line_bytes) {
-                            if likely(trusted_set || net.meets_min_prefix(input.min_prefix)) {
-                                if set.insert(net) {
-                                    added += 1;
-                                }
-                            } else {
-                                warn!(
-                                    "Skipping non-trusted IP range: {}",
-                                    String::from_utf8_lossy(line_bytes)
-                                );
-                                invalid += 1;
-                            }
-                        } else {
-                            cold_path();
-                            invalid += 1;
-                            if tracing::level_enabled!(tracing::Level::DEBUG) {
-                                debug!("Invalid IP entry: {}", String::from_utf8_lossy(line_bytes));
-                            }
-                        }
-                    }
-                    line_buffer.clear();
-                } else {
-                    // Line continues into the next chunk, buffer it
-                    line_buffer.extend_from_slice(&buf[..consume_len]);
-                }
-            }
-
-            // Advance the reader past the processed bytes
-            input.reader.consume(consume_len);
-        }
-
-        Self::log_results(set_name, input.source, added, invalid);
-    }
-
-    #[allow(dead_code)]
-    fn process_ips<R, T, F>(
+    fn merge_into_map<R, T, F>(
         target_map: &mut NetSets<T>,
         set_name: &str,
         mut input: ProcessingInput<R>,
@@ -368,20 +293,20 @@ impl IpSets {
         F: Fn(&[u8]) -> ParsedResult<T>,
     {
         let trusted_set = input.source.starts_with("inline:");
-        let set = Arc::make_mut(target_map.entry(IStr::from(set_name)).or_default());
         let mut added = 0;
         let mut invalid = 0;
 
-        const MAX_LINE_LEN: u64 = 4096;
-
+        const PAGE_ALIGNED_SIZE: usize = 4096;
         // We keep a buffer for the current line
-        let mut line_buffer = Vec::new();
+        let mut line_buf = Vec::with_capacity(PAGE_ALIGNED_SIZE >> 2);
+        let mut batch_buf = Vec::with_capacity(PAGE_ALIGNED_SIZE);
 
         loop {
-            line_buffer.clear();
-            let mut limit_reader = std::io::Read::take(&mut input.reader, MAX_LINE_LEN);
+            // Clear at the beginning because of early returns
+            line_buf.clear();
+            let mut limit_reader = std::io::Read::take(&mut input.reader, PAGE_ALIGNED_SIZE as u64);
 
-            let bytes_read = match limit_reader.read_until(b'\n', &mut line_buffer) {
+            let bytes_read = match limit_reader.read_until(b'\n', &mut line_buf) {
                 Ok(0) => break, // EOF
                 Ok(n) => n,
                 Err(e) => {
@@ -391,24 +316,23 @@ impl IpSets {
                 }
             };
 
-            if unlikely(bytes_read as u64 == MAX_LINE_LEN && line_buffer.last() != Some(&b'\n')) {
+            if unlikely(
+                bytes_read as u64 == PAGE_ALIGNED_SIZE as u64 && line_buf.last() != Some(&b'\n'),
+            ) {
                 warn!("Line too long in {}, discarding", input.source);
-
-                let mut sink = Vec::new(); // or a specialized discard buffer
-                let _ = input.reader.read_until(b'\n', &mut sink);
+                // Pass the original reader to discard garbage
+                Self::discard_line(&mut input.reader, Some(input.source));
                 continue;
             }
 
-            let line_bytes = Self::strip_comment_and_trim_bytes(&line_buffer);
+            let line_bytes = Self::strip_comment_and_trim_bytes(&line_buf);
             if line_bytes.is_empty() {
                 continue;
             }
 
             if let Some(net) = parser(line_bytes) {
                 if likely(trusted_set || net.meets_min_prefix(input.min_prefix)) {
-                    if set.insert(net) {
-                        added += 1;
-                    }
+                    batch_buf.push(net);
                 } else {
                     warn!(
                         "Skipping non-trusted IP range: {}",
@@ -425,11 +349,24 @@ impl IpSets {
             }
         }
 
+        let set = Arc::make_mut(target_map.entry(IStr::from(set_name)).or_default());
+        let old_len = set.len();
+
+        set.extend(batch_buf);
+        set.sort_unstable();
+
+        // partition_dedup moves duplicates to the end but doesn't truncate immediately
+        let (unique, _duplicates) = set.partition_dedup();
+        let new_len = unique.len();
+
+        added += new_len - old_len;
+        set.truncate(new_len);
+
         Self::log_results(set_name, input.source, added, invalid);
     }
 
     #[inline]
-    fn process_content<R: BufRead>(
+    fn process_input<R: BufRead>(
         &mut self,
         version: IpVersion,
         set_name: &str,
@@ -437,10 +374,10 @@ impl IpSets {
     ) {
         match version {
             IpVersion::V4 => {
-                Self::process_ips(&mut self.v4_sets, set_name, input, parse_v4_net_bytes);
+                Self::merge_into_map(&mut self.v4_sets, set_name, input, parse_v4_net_bytes);
             }
             IpVersion::V6 => {
-                Self::process_ips(&mut self.v6_sets, set_name, input, parse_v6_net_bytes);
+                Self::merge_into_map(&mut self.v6_sets, set_name, input, parse_v6_net_bytes);
             }
         }
     }
@@ -458,10 +395,7 @@ impl ThreadPool<DownloadJob, DownloadResult> {
 }
 
 fn download_url(timeout: u64, job: DownloadJob) -> DownloadResult {
-    use std::{
-        cell::RefCell,
-        io::{Seek, SeekFrom},
-    };
+    use std::{cell::RefCell, io::Seek, time::Duration};
 
     // Create a temporary file
     let temp_file = match tempfile::NamedTempFile::new() {
@@ -481,16 +415,21 @@ fn download_url(timeout: u64, job: DownloadJob) -> DownloadResult {
     );
 
     // We wrap the file in a RefCell to use it within the curl callbacks
-    let dst = RefCell::new(temp_file);
+    let dst_cell = RefCell::new(temp_file);
 
     let result = (|| -> Result<()> {
         let mut easy = curl::easy::Easy::new();
+        static USER_AGENT: &str = concat!(
+            "Mozilla/5.0 (compatible; zuul/",
+            env!("CARGO_PKG_VERSION"),
+            ")"
+        );
 
         easy.url(&job.url)
             .context(format!("Failed to set URL: {}", job.url))?;
-        easy.timeout(std::time::Duration::from_secs(timeout))
+        easy.timeout(Duration::from_secs(timeout))
             .context("Failed to set timeout")?;
-        easy.useragent("Mozilla/5.0 (compatible; zuul/0.6.0)")
+        easy.useragent(USER_AGENT)
             .context("Failed to set user agent")?;
         easy.follow_location(true)
             .context("Failed to enable follow location")?;
@@ -500,7 +439,7 @@ fn download_url(timeout: u64, job: DownloadJob) -> DownloadResult {
             // Write function now writes to the file
             transfer
                 .write_function(|data| {
-                    let mut file = dst.borrow_mut();
+                    let mut file = dst_cell.borrow_mut();
                     file.write_all(data)
                         .map(|()| data.len())
                         .map_err(|_| curl::easy::WriteError::Pause)
@@ -526,10 +465,8 @@ fn download_url(timeout: u64, job: DownloadJob) -> DownloadResult {
         url: job.url,
         // We use and_then because seeking might fail
         source: result.and_then(|()| {
-            let mut file = dst.into_inner();
-
-            // Rewind the file before returning it
-            file.seek(SeekFrom::Start(0))
+            let mut file = dst_cell.into_inner();
+            file.rewind()
                 .context("Failed to seek to start of downloaded file")?;
 
             Ok(InputSource::Temp(file))
@@ -674,7 +611,7 @@ fn render_template(
     let mut all_sets = HashMap::new();
 
     let mut collect = |_, name: &str, val: &minijinja::Value| {
-        all_sets.insert(name.to_string(), val.clone());
+        all_sets.insert(name.to_owned(), val.clone());
         Ok(())
     };
 
@@ -756,7 +693,7 @@ fn collect_ip_sets(context: &AppContext, suffix: u64) -> IpSets {
                 min_prefix,
             };
 
-            sets.process_content(ip_version, &set_name, input);
+            sets.process_input(ip_version, &set_name, input);
         }
 
         // Blacklist
@@ -773,7 +710,7 @@ fn collect_ip_sets(context: &AppContext, suffix: u64) -> IpSets {
                 min_prefix,
             };
 
-            sets.process_content(ip_version, &set_name, input);
+            sets.process_input(ip_version, &set_name, input);
         }
 
         // Prepare retrieval of remote content
@@ -855,7 +792,7 @@ fn collect_ip_sets(context: &AppContext, suffix: u64) -> IpSets {
                     }),
                 };
 
-                sets.process_content(version, &set_name, input);
+                sets.process_input(version, &set_name, input);
             }
         }
         Err(e) => {
@@ -972,7 +909,7 @@ fn refresh(context: &AppContext) -> Result<()> {
 
     // Combine everything into one single transaction
     let atomic_update = |writer: &mut dyn Write| -> Result<()> {
-        // table begin {
+        // TABLE BEGIN
         // Note: This works in the same stream. nft processes line-by-line in a single transaction
         // context.
         writeln!(writer, "flush chain netdev blackhole validation")?;
@@ -981,7 +918,7 @@ fn refresh(context: &AppContext) -> Result<()> {
 
         render_template(context, &sets, writer, "chain_validation", suffix)?;
         writeln!(writer, "}}")?;
-        // table end }
+        // TABLE END
 
         Ok(())
     };
@@ -1115,7 +1052,7 @@ fn main() -> Result<()> {
     }
 
     let config_path = resolve_fragment(cli.config, "config.yaml")?;
-    let template_path = resolve_fragment(cli.template, "template.jinja2")?;
+    let template_path = resolve_fragment(cli.template, "template.j2")?;
 
     // Landlock init
     #[cfg(feature = "sandbox")]
@@ -1333,7 +1270,7 @@ mod tests {
             reader: cursor,
             min_prefix: MIN_PREFIX_LEN,
         };
-        IpSets::process_ips(&mut map, "test-set", input, parse_u32_bytes);
+        IpSets::merge_into_map(&mut map, "test-set", input, parse_u32_bytes);
 
         let set = map.get("test-set").expect("set should exist");
         // Valid unique entries: {1, 2}
@@ -1354,7 +1291,7 @@ mod tests {
             reader: cursor,
             min_prefix: MIN_PREFIX_LEN,
         };
-        IpSets::process_ips(&mut map, "new-set", input, parse_u32_bytes);
+        IpSets::merge_into_map(&mut map, "new-set", input, parse_u32_bytes);
         let set = map.get("new-set").expect("set should have been created");
         assert_eq!(set.len(), 1);
         assert!(set.contains(&42));
@@ -1371,18 +1308,175 @@ mod tests {
             reader: cursor,
             min_prefix: MIN_PREFIX_LEN,
         };
-        IpSets::process_ips(&mut map, "comments", input, parse_u32_bytes);
+        IpSets::merge_into_map(&mut map, "comments", input, parse_u32_bytes);
         let set = map.get("comments").expect("set should exist");
         assert_eq!(set.len(), 1);
         assert!(set.contains(&7));
     }
 
     #[test]
+    fn process_ips_enforces_min_prefix_for_untrusted_source() {
+        let mut map = NetSets::<Ipv4Net>::default();
+        // Data:
+        // 192.168.1.1/32 -> Valid (prefix 32 >= 24)
+        // 10.0.0.0/8     -> Invalid (prefix 8 < 24)
+        // 172.16.0.0/24  -> Valid (prefix 24 >= 24)
+        let content = b"192.168.1.1/32\n10.0.0.0/8\n172.16.0.0/24\n";
+        // Untrusted source (does not start with "inline:")
+        let source = "https://example.com/bad_ips.txt";
+        let input = ProcessingInput {
+            source,
+            reader: Cursor::new(content.to_vec()),
+            min_prefix: 24,
+        };
+        IpSets::merge_into_map(&mut map, "filter_v4", input, parse_v4_net_bytes);
+        let set = map.get("filter_v4").expect("set should exist");
+        assert_eq!(set.len(), 2);
+
+        let valid_1 = parse_v4_net_bytes(b"192.168.1.1/32").unwrap();
+        assert!(set.contains(&valid_1));
+
+        let valid_2 = parse_v4_net_bytes(b"172.16.0.0/24").unwrap();
+        assert!(set.contains(&valid_2));
+
+        let invalid = parse_v4_net_bytes(b"10.0.0.0/8").unwrap();
+        assert!(!set.contains(&invalid));
+    }
+
+    #[test]
+    fn process_ips_allows_short_prefix_for_trusted_source() {
+        let mut map = NetSets::<Ipv4Net>::default();
+        // 10.0.0.0/8 is usually too short, but should be allowed for trusted
+        let content = b"10.0.0.0/8\n";
+        // Trusted source (starts with "inline:")
+        let source = "inline:whitelist_v4";
+        let input = ProcessingInput {
+            source,
+            reader: Cursor::new(content.to_vec()),
+            min_prefix: 24,
+        };
+        IpSets::merge_into_map(&mut map, "trusted_v4", input, parse_v4_net_bytes);
+        let set = map.get("trusted_v4").expect("set should exist");
+        assert_eq!(set.len(), 1);
+
+        let net = parse_v4_net_bytes(b"10.0.0.0/8").unwrap();
+        assert!(set.contains(&net));
+    }
+
+    #[test]
+    fn process_ips_handles_large_lines_gracefully() {
+        // We can use u32 here for simplicity of data generation,
+        // as this test checks buffer logic, not IP parsing.
+        let mut map = NetSets::<u32>::default();
+        // Create a line larger than PAGE_ALIGNED_SIZE (4096)
+        let mut big_line = vec![b'a'; 4097];
+        big_line.push(b'\n');
+        let valid_line = b"123\n";
+        let mut content = big_line;
+        content.extend_from_slice(valid_line);
+        let input = ProcessingInput {
+            source: "memory://overflow",
+            reader: Cursor::new(content),
+            min_prefix: 0,
+        };
+        IpSets::merge_into_map(&mut map, "overflow_test", input, parse_u32_bytes);
+
+        let set = map.get("overflow_test").unwrap();
+        assert_eq!(set.len(), 1);
+        assert_eq!(set[0], 123);
+    }
+
+    #[test]
+    fn process_ips_handles_eof_without_newline() {
+        let mut map = NetSets::<u32>::default();
+        // "999" without a trailing \n
+        let content = b"999";
+        let input = ProcessingInput {
+            source: "memory://eof_no_newline",
+            reader: Cursor::new(content.to_vec()),
+            min_prefix: 0,
+        };
+        IpSets::merge_into_map(&mut map, "eof_test", input, parse_u32_bytes);
+
+        let set = map.get("eof_test").unwrap();
+        assert_eq!(set.len(), 1);
+        assert_eq!(set[0], 999);
+    }
+
+    #[test]
+    fn process_ips_discards_lines_exceeding_buffer_limit() {
+        let mut map = NetSets::<u32>::default();
+        // 1. Create a "Line Too Long": 4096 bytes of 'a's (fills the buffer completely without a
+        //    newline). Followed by "1\n" (the "tail" of the long line). Total line length: 4096 + 2
+        //    = 4098 bytes.
+        let mut content = vec![b'a'; 4096];
+        content.extend_from_slice(b"1\n");
+        // 2. Add a valid second line "2\n"
+        content.extend_from_slice(b"2\n");
+        let input = ProcessingInput {
+            source: "memory://long_line_test",
+            reader: Cursor::new(content),
+            min_prefix: 0,
+        };
+        IpSets::merge_into_map(&mut map, "long_test", input, parse_u32_bytes);
+        let set = map.get("long_test").expect("set should be created");
+
+        // "1" must be DISCARDED because it is part of the long line.
+        // "2" must be ACCEPTED because the buffer was cleared and recovery was successful.
+        assert_eq!(set.len(), 1);
+        assert!(set.contains(&2));
+        assert!(!set.contains(&1));
+    }
+
+    #[test]
+    fn process_ips_accepts_lines_at_exact_buffer_limit() {
+        let mut map = NetSets::<u32>::default();
+        // Create a line exactly 4096 bytes long (the buffer limit).
+        // 4094 spaces + "1" + "\n" = 4096 bytes.
+        // This is a valid line that fills the buffer exactly.
+        let mut content = vec![b' '; 4094];
+        content.push(b'1');
+        content.push(b'\n');
+        let input = ProcessingInput {
+            source: "memory://boundary_test",
+            reader: Cursor::new(content),
+            min_prefix: 0,
+        };
+        IpSets::merge_into_map(&mut map, "boundary_test", input, parse_u32_bytes);
+        let set = map.get("boundary_test").expect("set should be created");
+
+        // Should NOT be discarded.
+        // Trimming removes the 4094 spaces, leaving "1".
+        assert_eq!(set.len(), 1);
+        assert!(set.contains(&1));
+    }
+
+    #[test]
+    fn process_ips_deduplicates_and_sorts() {
+        // Verify deduplication logic works for IpNets too
+        let mut map = NetSets::<Ipv4Net>::default();
+        // 1.1.1.1, 8.8.8.8, 1.1.1.1 (dup)
+        let content = b"1.1.1.1\n8.8.8.8\n1.1.1.1\n";
+        let input = ProcessingInput {
+            source: "memory://dedup",
+            reader: Cursor::new(content.to_vec()),
+            min_prefix: 0,
+        };
+        IpSets::merge_into_map(&mut map, "dedup_v4", input, parse_v4_net_bytes);
+        let set = map.get("dedup_v4").unwrap();
+        assert_eq!(set.len(), 2);
+
+        // Verify sorted order
+        let ip1 = parse_v4_net_bytes(b"1.1.1.1").unwrap();
+        let ip2 = parse_v4_net_bytes(b"8.8.8.8").unwrap();
+        assert_eq!(set[0], ip1);
+        assert_eq!(set[1], ip2);
+    }
+
+    #[test]
     fn test_lazy_ip_set_formatting_multiple() {
-        let mut set = BTreeSet::new();
+        let set = vec!["10.0.0.0/8".to_owned(), "192.168.0.0/16".to_owned()];
         // Insert strings (LazyIpSet is generic over T: Display)
-        set.insert("10.0.0.0/8".to_owned());
-        set.insert("192.168.0.0/16".to_owned());
         let lazy = LazyIpSet {
             data: Arc::new(set),
             set_type: SetType::Static,
@@ -1395,8 +1489,7 @@ mod tests {
 
     #[test]
     fn test_lazy_ip_set_formatting_single() {
-        let mut set = BTreeSet::new();
-        set.insert("10.0.0.0/8".to_owned());
+        let set = vec!["10.0.0.0/8".to_owned()];
         let lazy = LazyIpSet {
             data: Arc::new(set),
             set_type: SetType::Static,
@@ -1406,7 +1499,7 @@ mod tests {
 
     #[test]
     fn test_lazy_ip_set_formatting_empty() {
-        let set = BTreeSet::<String>::new();
+        let set = NetSet::<String>::new();
         let lazy = LazyIpSet {
             data: Arc::new(set),
             set_type: SetType::Static,
@@ -1418,8 +1511,7 @@ mod tests {
     fn test_lazy_ip_set_truthiness() {
         use minijinja::value::Object;
 
-        let mut set = BTreeSet::new();
-        set.insert("item".to_owned());
+        let set = vec!["item".to_owned()];
         let not_empty = Arc::new(LazyIpSet {
             data: Arc::new(set),
             set_type: SetType::Static,
@@ -1427,7 +1519,7 @@ mod tests {
         assert!(Object::is_true(&not_empty));
 
         let empty = Arc::new(LazyIpSet {
-            data: Arc::new(BTreeSet::<String>::new()),
+            data: Arc::new(NetSet::<String>::new()),
             set_type: SetType::Static,
         });
         assert!(!Object::is_true(&empty));

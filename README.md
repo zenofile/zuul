@@ -28,9 +28,9 @@ A high-performance utility for managing nftables-based IP blocklists with suppor
 cargo build --release --features=static
 cp target/release/zuul /usr/local/bin/
 mkdir -p /usr/local/etc/zuul/
-cp config.yaml template.jinja2 /usr/local/etc/zuul/
-cp -r zuul-.service.d /etc/systemd/system/
-cp zuul-main.service zuul-refresh.{service,timer} /etc/systemd/system/
+cp config.yaml template.j2 /usr/local/etc/zuul/
+cp -r systemd/zuul-.service.d /etc/systemd/system/
+cp systemd/zuul-main.service systemd/zuul-refresh.{service,timer} /etc/systemd/system/
 systemctl daemon-reload
 ```
 

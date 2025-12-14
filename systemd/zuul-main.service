@@ -8,9 +8,9 @@ Wants=network-online.target
 [Service]
 Type=oneshot
 RemainAfterExit=yes
-ExecStart=/usr/local/bin/zuul --verbose --enforce-sandbox --config /usr/local/etc/zuul/config.yaml --template /usr/local/etc/zuul/template.jinja2 start
-ExecStop=/usr/local/bin/zuul --verbose --enforce-sandbox --config /usr/local/etc/zuul/config.yaml --template /usr/local/etc/zuul/template.jinja2 stop
-ExecReload=/usr/local/bin/zuul --verbose --enforce-sandbox --config /usr/local/etc/zuul/config.yaml --template /usr/local/etc/zuul/template.jinja2 refresh
+ExecStart=/usr/local/bin/zuul --verbose --enforce-sandbox --config /usr/local/etc/zuul/config.yaml --template /usr/local/etc/zuul/template.j2 start
+ExecStop=/usr/local/bin/zuul --verbose --enforce-sandbox --config /usr/local/etc/zuul/config.yaml --template /usr/local/etc/zuul/template.j2 stop
+ExecReload=/usr/local/bin/zuul --verbose --enforce-sandbox --config /usr/local/etc/zuul/config.yaml --template /usr/local/etc/zuul/template.j2 refresh
 TimeoutStartSec=120
 TimeoutStopSec=30
 

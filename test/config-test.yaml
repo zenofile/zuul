@@ -1,0 +1,12 @@
+# NET:
+#   v4:
+#     enabled: yes 
+#     min_prefix: 8
+#   v6:
+#     enabled: yes
+#     min_prefix: 16
+
+ABUSELIST:
+  v4:
+    - url: file://test/ipv4-test.netset
+      min_prefix: 0
