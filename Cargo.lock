@@ -840,9 +840,9 @@ dependencies = [
 
 [[package]]
 name = "serde-saphyr"
-version = "0.0.10"
+version = "0.0.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9b9e06cddad47cc6214c0c456cf209b99a58b54223e7af2f6d4b88a5a9968499"
+checksum = "bbc40144bd36ca0cf5c8ee3bc181d315f2ba92c0078a59f32317d89938140829"
 dependencies = [
  "ahash",
  "base64",
@@ -1442,7 +1442,7 @@ checksum = "b97154e67e32c85465826e8bcc1c59429aaaf107c1e4a9e53c8d8ccd5eff88d0"
 
 [[package]]
 name = "zuul"
-version = "0.7.2"
+version = "0.8.0"
 dependencies = [
  "anyhow",
  "clap",

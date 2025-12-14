@@ -12,7 +12,7 @@ publish = false
 readme = "README.md"
 repository = "https://github.com/zenofile/zuul.git"
 rust-version = "1.94"
-version = "0.7.2"
+version = "0.8.0"
 
 [dependencies]
 anyhow = "1"
@@ -28,7 +28,7 @@ minijinja = { version = "2", default-features = false, features = [
 ] }
 regex = "1"
 serde = { version = "1", features = ["derive"] }
-serde-saphyr = "0.0.10"
+serde-saphyr = "0.0.11"
 tempfile = { version = "3", features = ["nightly"] }
 thiserror = "2"
 tracing = "0.1"
@@ -49,8 +49,11 @@ lto = "fat"
 opt-level = 3
 overflow-checks = false
 panic = "abort"
-rustflags = ["-C", "target-cpu=native"]
 strip = "symbols"
+
+[profile.release-native]
+inherits = "release"
+rustflags = ["-C", "target-cpu=native"]
 
 [profile.profiling]
 inherits = "release"

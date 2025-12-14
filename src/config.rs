@@ -11,7 +11,7 @@ macro_rules! skip_fmt {
     ($($i:item)*) => { $($i)* };
 }
 
-pub type CowS = Cow<'static, str>;
+pub type StaticCow = Cow<'static, str>;
 pub type MaybeIPList = Option<HashMap<IpVersion, Vec<ListEntry>>>;
 
 pub fn resolve_fragment(user_path: Option<String>, filename: &str) -> Result<PathBuf> {
@@ -46,7 +46,7 @@ pub fn resolve_fragment(user_path: Option<String>, filename: &str) -> Result<Pat
         })
 }
 
-fn get_default_interface() -> Option<CowS> {
+fn get_default_interface() -> Option<StaticCow> {
     fs::read_to_string("/proc/net/route")
         .ok()?
         .lines()
@@ -181,8 +181,8 @@ impl IpConfigs {
 }
 
 skip_fmt! {
-    const fn default_accept() -> CowS { Cow::Borrowed("accept") }
-    const fn default_drop() -> CowS { Cow::Borrowed("drop") }
+    const fn default_accept() -> StaticCow { Cow::Borrowed("accept") }
+    const fn default_drop() -> StaticCow { Cow::Borrowed("drop") }
     const fn default_log_enabled() -> bool { true }
     const fn default_log_ratelimiting() -> bool { true }
     const fn default_log_rate() -> u64 { 10 }
@@ -216,9 +216,9 @@ impl Default for LogConfig {
 #[derive(Debug, Deserialize, Clone)]
 pub struct AsnSources {
     #[serde(default, deserialize_with = "deserialize_one_or_many")]
-    pub v4: Vec<CowS>,
+    pub v4: Vec<StaticCow>,
     #[serde(default, deserialize_with = "deserialize_one_or_many")]
-    pub v6: Vec<CowS>,
+    pub v6: Vec<StaticCow>,
 }
 
 impl Default for AsnSources {
@@ -235,7 +235,7 @@ impl Default for AsnSources {
 }
 
 impl AsnSources {
-    pub fn get(&self, version: IpVersion) -> &[CowS] {
+    pub fn get(&self, version: IpVersion) -> &[StaticCow] {
         match version {
             IpVersion::V4 => &self.v4,
             IpVersion::V6 => &self.v6,
@@ -246,9 +246,9 @@ impl AsnSources {
 #[derive(Debug, Deserialize, Clone)]
 pub struct CountrySources {
     #[serde(default, deserialize_with = "deserialize_one_or_many")]
-    pub v4: Vec<CowS>,
+    pub v4: Vec<StaticCow>,
     #[serde(default, deserialize_with = "deserialize_one_or_many")]
-    pub v6: Vec<CowS>,
+    pub v6: Vec<StaticCow>,
 }
 
 impl Default for CountrySources {
@@ -265,7 +265,7 @@ impl Default for CountrySources {
 }
 
 impl CountrySources {
-    pub fn get(&self, version: IpVersion) -> &[CowS] {
+    pub fn get(&self, version: IpVersion) -> &[StaticCow] {
         match version {
             IpVersion::V4 => &self.v4,
             IpVersion::V6 => &self.v6,
@@ -283,10 +283,10 @@ pub struct Sources {
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct SetNames {
-    pub whitelist: CowS,
-    pub blacklist: CowS,
-    pub abuselist: CowS,
-    pub country: CowS,
+    pub whitelist: StaticCow,
+    pub blacklist: StaticCow,
+    pub abuselist: StaticCow,
+    pub country: StaticCow,
 }
 
 impl Default for SetNames {
@@ -305,15 +305,15 @@ pub struct Config {
     #[serde(rename = "NET", default)]
     pub net: IpConfigs,
     #[serde(rename = "DEFAULT_POLICY", default = "default_accept")]
-    pub default_policy: CowS,
+    pub default_policy: StaticCow,
     #[serde(rename = "BLOCK_POLICY", default = "default_drop")]
-    pub block_policy: CowS,
+    pub block_policy: StaticCow,
     #[serde(
         rename = "IIFNAME",
         default,
         deserialize_with = "deserialize_one_or_many"
     )]
-    pub iifname: Vec<CowS>,
+    pub iifname: Vec<StaticCow>,
     #[serde(rename = "SET_NAMES", default)]
     pub set_names: SetNames,
     #[serde(rename = "LOGGING", default)]

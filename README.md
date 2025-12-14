@@ -1,10 +1,12 @@
 # zuul
 
-A high-performance utility for managing nftables-based IP blocklists with support for country-based filtering and abuse list integration.
+A basic utility for managing nftables-based IP blocklists with support for country-based filtering and abuse list integration.
+
+Inspired by [nft-blackhole](https://github.com/tomasz-c/nft-blackhole).
 
 ## Features
 
-- **Multi-source IP blocking**: Whitelist, blacklist, abuse lists, and country-based filtering
+- **Multi-source IP blocking**: Whitelists, blacklists, abuselists, and country-based filtering
 - **Dual-stack support**: IPv4 and IPv6 with independent configuration
 - **Concurrent downloads**: Multi-threaded fetching of remote IP lists
 - **Template-based rules**: Jinja2 templating for flexible nftables rule generation
@@ -22,7 +24,7 @@ A high-performance utility for managing nftables-based IP blocklists with suppor
 - libssl >= 3
 - libcurl >= 4
 
-## Installation
+## Building & Installation
 
 ```cli
 cargo build --release --features=static

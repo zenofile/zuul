@@ -18,14 +18,14 @@
 {% block sets_dynamic %}
     {% for name, set in sets|items %}
         {% if not set.is_static %}
-        set {{ name }} {
-            type {% if '_v4' in name %}ipv4_addr{% else %}ipv6_addr{% endif %};
-            flags interval;
-            auto-merge;
-            {% if set %}
-                elements = { {{ set|safe }} }
-            {% endif %}
-        }
+            set {{ name }}_{{ epoch }} {
+                type {% if '_v4' in name %}ipv4_addr{% else %}ipv6_addr{% endif %};
+                flags interval;
+                auto-merge;
+                {% if set %}
+                    elements = { {{ set|safe }} }
+                {% endif %}
+            }
         {% endif %}
     {% endfor %}
 {% endblock %}
@@ -60,36 +60,38 @@
 
             {% if ip_versions.v4 %}
                 {# Whitelist #}
-                {% set wl_logical = set_names.whitelist ~ "_v4" %}
-                {% set wl_actual = set_mappings[wl_logical] %}
-                {% if sets[wl_actual] is defined %}
-                    ip saddr @{{ wl_actual }} counter name {{ set_names.whitelist }}_v4_cnt accept
+                {% set wl_versioned = set_names.whitelist ~ "_v4" %}
+                {% if sets[wl_versioned] is defined %}
+                    ip saddr @{{ wl_versioned}} counter name {{ set_names.whitelist }}_v4_cnt accept
                 {% endif %}
 
-                {# Deny Sets #}
+                {# Deny Sets, can be dynamic #}
                 {% for base in [set_names.blacklist, set_names.abuselist, set_names.country] %}
-                    {% set logical = base ~ "_v4" %}
-                    {% set actual = set_mappings[logical] %}
-                    {% if sets[actual] is defined %}
-                        ip saddr @{{ actual }} counter name {{ base }}_v4_cnt goto log-debug
+                    {% set versioned = base ~ "_v4" %}
+                    {% if sets[versioned] is defined %}
+                        {% if not sets[versioned].is_static %}
+                            {% set versioned = versioned ~ "_" ~ epoch %}
+                        {% endif %}
+                        ip saddr @{{ versioned}} counter name {{ base }}_v4_cnt goto log-debug
                     {% endif %}
                 {% endfor %}
             {% endif %}
 
             {% if ip_versions.v6 %}
                 {# Whitelist #}
-                {% set wl_logical = set_names.whitelist ~ "_v6" %}
-                {% set wl_actual = set_mappings[wl_logical] %}
-                {% if sets[wl_actual] is defined %}
-                    ip6 saddr @{{ wl_actual }} counter name {{ set_names.whitelist }}_v6_cnt accept
+                {% set wl_versioned = set_names.whitelist ~ "_v6" %}
+                {% if sets[wl_versioned] is defined %}
+                    ip6 saddr @{{ wl_versioned}} counter name {{ set_names.whitelist }}_v6_cnt accept
                 {% endif %}
 
-                {# Deny Sets #}
+                {# Deny Sets, can be dynamic #}
                 {% for base in [set_names.blacklist, set_names.abuselist, set_names.country] %}
-                    {% set logical = base ~ "_v6" %}
-                    {% set actual = set_mappings[logical] %}
-                    {% if sets[actual] is defined %}
-                        ip6 saddr @{{ actual }} counter name {{ base }}_v6_cnt goto log-debug
+                    {% set versioned = base ~ "_v6" %}
+                    {% if sets[versioned] is defined %}
+                        {% if not sets[versioned].is_static %}
+                            {% set versioned = versioned ~ "_" ~ epoch %}
+                        {% endif %}
+                        ip6 saddr @{{ versioned }} counter name {{ base }}_v6_cnt goto log-debug
                     {% endif %}
                 {% endfor %}
             {% endif %}

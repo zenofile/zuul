@@ -1,6 +1,6 @@
 # NET:
 #   v4:
-#     enabled: yes 
+#     enabled: yes
 #     min_prefix: 8
 #   v6:
 #     enabled: yes

@@ -2,7 +2,7 @@
 ## Defaults: v4: 8, v6: 16
 # NET:
 #   v4:
-#     enabled: yes 
+#     enabled: yes
 #     min_prefix: 8
 #   v6:
 #     enabled: yes
@@ -25,7 +25,7 @@
 #   country: country
 
 ## Logging configuration
-## enable: Logging state 
+## enable: Logging state
 ## rate: Packet rate limit (packets/minute)
 ## burst: Packet burst limit
 # LOGGING:
@@ -36,16 +36,16 @@
 
 ## ASN and country IP sources, `null` means don't process, no key/commented means default url
 # SOURCES:
-#   asn:                                                                                                                                                                              
-#     v4: "https://raw.githubusercontent.com/ipverse/asn-ip/master/as/{asn}/ipv4-aggregated.txt"                                                                                      
-#     v6: "https://raw.githubusercontent.com/ipverse/asn-ip/master/as/{asn}/ipv6-aggregated.txt"                                                                                      
-#   country:                                                                                                                                                                          
-#     v4: "https://raw.githubusercontent.com/herrbischoff/country-ip-blocks/master/ipv4/{country}.cidr"                                                                               
-#      # - "https://raw.githubusercontent.com/firehol/blocklist-ipsets/refs/heads/master/geolite2_country/country_{country}.netset"                                                    
-#      # - "https://raw.githubusercontent.com/firehol/blocklist-ipsets/refs/heads/master/ip2location_country/ip2location_country_{country}.netset"                                     
-#      # - "https://raw.githubusercontent.com/firehol/blocklist-ipsets/refs/heads/master/ipdeny_country/id_country_{country}.netset"                                                   
-#      # - "https://raw.githubusercontent.com/firehol/blocklist-ipsets/refs/heads/master/ipip_country/ipip_country_{country}.netset"                                                   
-#     v6: "https://raw.githubusercontent.com/herrbischoff/country-ip-blocks/master/ipv6/{country}.cidr" 
+#   asn:
+#     v4: "https://raw.githubusercontent.com/ipverse/asn-ip/master/as/{asn}/ipv4-aggregated.txt"
+#     v6: "https://raw.githubusercontent.com/ipverse/asn-ip/master/as/{asn}/ipv6-aggregated.txt"
+#   country:
+#     v4: "https://raw.githubusercontent.com/herrbischoff/country-ip-blocks/master/ipv4/{country}.cidr"
+#      # - "https://raw.githubusercontent.com/firehol/blocklist-ipsets/refs/heads/master/geolite2_country/country_{country}.netset"
+#      # - "https://raw.githubusercontent.com/firehol/blocklist-ipsets/refs/heads/master/ip2location_country/ip2location_country_{country}.netset"
+#      # - "https://raw.githubusercontent.com/firehol/blocklist-ipsets/refs/heads/master/ipdeny_country/id_country_{country}.netset"
+#      # - "https://raw.githubusercontent.com/firehol/blocklist-ipsets/refs/heads/master/ipip_country/ipip_country_{country}.netset"
+#     v6: "https://raw.githubusercontent.com/herrbischoff/country-ip-blocks/master/ipv6/{country}.cidr"
 
 ## Static list: IP or Network adresses
 WHITELIST:
@@ -92,4 +92,4 @@ ABUSELIST:
 ## Country list: two letter country codes defined in ISO 3166-1
 ## https://en.wikipedia.org/wiki/ISO_3166-1_alpha-2#Officially_assigned_code_elements
 COUNTRY_LIST:
-  - cn 
+  - cn

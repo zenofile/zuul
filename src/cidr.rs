@@ -18,6 +18,13 @@ impl Ipv4Prefix {
     pub const fn as_u8(self) -> u8 {
         self.0
     }
+
+    #[must_use]
+    pub fn to_netmask(self) -> std::net::Ipv4Addr {
+        let shift = 32 - self.0;
+        let mask = (!0u32).checked_shl(shift.into()).unwrap_or(0);
+        std::net::Ipv4Addr::from(mask)
+    }
 }
 
 impl From<Ipv4Prefix> for u8 {
@@ -47,13 +54,6 @@ impl Ipv6Prefix {
     #[must_use]
     pub const fn as_u8(self) -> u8 {
         self.0
-    }
-
-    #[must_use]
-    pub fn to_netmask(self) -> std::net::Ipv4Addr {
-        let shift = 32 - self.0;
-        let mask = (!0u32).checked_shl(shift.into()).unwrap_or(0);
-        std::net::Ipv4Addr::from(mask)
     }
 }
 
@@ -254,6 +254,60 @@ mod prefix_parser {
             let input = b"fd00::1/129";
             assert!(parse_v6_net_bytes(input).is_none());
         }
+
+        #[test]
+        fn test_parse_v4_net_bytes_with_prefix() {
+            let result = parse_v4_net_bytes(b"192.168.1.0/24");
+            assert!(result.is_some());
+
+            let net = result.unwrap();
+            assert_eq!(net.addr(), std::net::Ipv4Addr::new(192, 168, 1, 0));
+            assert_eq!(net.prefix_len(), 24);
+        }
+
+        #[test]
+        fn test_parse_v4_net_bytes_without_prefix() {
+            let result = parse_v4_net_bytes(b"192.168.1.1");
+            assert!(result.is_some());
+            let net = result.unwrap();
+            // Should default to /32
+            assert_eq!(net.prefix_len(), 32);
+        }
+
+        #[test]
+        fn test_parse_v4_net_bytes_invalid() {
+            assert!(parse_v4_net_bytes(b"invalid").is_none());
+            assert!(parse_v4_net_bytes(b"192.168.1.0/33").is_none()); // Invalid prefix
+            assert!(parse_v4_net_bytes(b"").is_none());
+        }
+
+        // Tests for parse_v6_net_bytes
+        #[test]
+        fn test_parse_v6_net_bytes_with_prefix() {
+            let result = parse_v6_net_bytes(b"2001:db8::/32");
+            assert!(result.is_some());
+
+            let net = result.unwrap();
+            assert_eq!(net.addr().to_string(), "2001:db8::");
+            assert_eq!(net.prefix_len(), 32);
+        }
+
+        #[test]
+        fn test_parse_v6_net_bytes_without_prefix() {
+            let result = parse_v6_net_bytes(b"::1");
+
+            assert!(result.is_some());
+            let net = result.unwrap();
+            // Should default to /128
+            assert_eq!(net.prefix_len(), 128);
+        }
+
+        #[test]
+        fn test_parse_v6_net_bytes_invalid() {
+            assert!(parse_v6_net_bytes(b"invalid").is_none());
+            assert!(parse_v6_net_bytes(b"2001:db8::/129").is_none()); // Invalid prefix
+            assert!(parse_v6_net_bytes(b"").is_none());
+        }
     }
 }
 
@@ -261,9 +315,118 @@ pub use self::prefix_parser::*;
 
 #[cfg(test)]
 mod tests {
+    use std::net::Ipv4Addr;
+
+    use ipnet::{Ipv4Net, Ipv6Net};
+
     use super::*;
 
-    // Tests for Ipv6Prefix::new()
+    #[test]
+    fn test_ipv4_prefix_new_valid() {
+        assert!(Ipv4Prefix::new(0).is_some());
+        assert!(Ipv4Prefix::new(24).is_some());
+        assert!(Ipv4Prefix::new(32).is_some());
+    }
+
+    #[test]
+    fn test_ipv4_prefix_new_invalid() {
+        assert!(Ipv4Prefix::new(33).is_none());
+        assert!(Ipv4Prefix::new(100).is_none());
+        assert!(Ipv4Prefix::new(255).is_none());
+    }
+
+    #[test]
+    fn test_ipv4_prefix_as_u8() {
+        let prefix = Ipv4Prefix::new(24).unwrap();
+        assert_eq!(prefix.as_u8(), 24);
+    }
+
+    #[test]
+    fn test_ipv4_prefix_to_netmask() {
+        // /24 -> 255.255.255.0
+        let prefix = Ipv4Prefix::new(24).unwrap();
+        assert_eq!(
+            prefix.to_netmask(),
+            std::net::Ipv4Addr::new(255, 255, 255, 0)
+        );
+
+        // /32 -> 255.255.255.255
+        let prefix = Ipv4Prefix::new(32).unwrap();
+        assert_eq!(prefix.to_netmask(), Ipv4Addr::BROADCAST);
+
+        // /0 -> 0.0.0.0
+        let prefix = Ipv4Prefix::new(0).unwrap();
+        assert_eq!(prefix.to_netmask(), Ipv4Addr::UNSPECIFIED);
+
+        // /8 -> 255.0.0.0
+        let prefix = Ipv4Prefix::new(8).unwrap();
+        assert_eq!(prefix.to_netmask(), Ipv4Addr::new(255, 0, 0, 0));
+    }
+
+    #[test]
+    fn test_ipv4_prefix_into_u8() {
+        let prefix = Ipv4Prefix::new(16).unwrap();
+        let value: u8 = prefix.into();
+        assert_eq!(value, 16);
+    }
+
+    #[test]
+    fn test_ipv4_prefix_try_from_bytes_valid() {
+        assert!(Ipv4Prefix::try_from(b"0" as &[u8]).is_ok());
+        assert!(Ipv4Prefix::try_from(b"24" as &[u8]).is_ok());
+        assert!(Ipv4Prefix::try_from(b"32" as &[u8]).is_ok());
+    }
+
+    #[test]
+    fn test_ipv4_prefix_try_from_bytes_invalid() {
+        assert!(Ipv4Prefix::try_from(b"33" as &[u8]).is_err());
+        assert!(Ipv4Prefix::try_from(b"-1" as &[u8]).is_err());
+        assert!(Ipv4Prefix::try_from(b"abc" as &[u8]).is_err());
+        assert!(Ipv4Prefix::try_from(b"" as &[u8]).is_err());
+    }
+
+    // Tests for PrefixCheck trait
+    #[test]
+    fn test_prefix_check_ipv4() {
+        let net_slash_24 = "192.168.1.0/24".parse::<Ipv4Net>().unwrap();
+        let net_slash_32 = "192.168.1.1/32".parse::<Ipv4Net>().unwrap();
+        let net_slash_8 = "10.0.0.0/8".parse::<Ipv4Net>().unwrap();
+
+        // Check against min /24
+        assert!(net_slash_24.meets_min_prefix(24));
+        assert!(net_slash_32.meets_min_prefix(24)); // /32 >= /24
+        assert!(!net_slash_8.meets_min_prefix(24)); // /8 < /24
+
+        // Check against default constant (just logic check, value is 8)
+        assert!(net_slash_24.meets_min_prefix(Ipv4Net::MIN_PREFIX_LEN_V4));
+    }
+
+    #[test]
+    fn test_prefix_check_ipv6() {
+        let net_slash_64 = "2001:db8::/64".parse::<Ipv6Net>().unwrap();
+        let net_slash_128 = "::1/128".parse::<Ipv6Net>().unwrap();
+        let net_slash_10 = "2000::/10".parse::<Ipv6Net>().unwrap();
+
+        // Check against min /64
+        assert!(net_slash_64.meets_min_prefix(64));
+        assert!(net_slash_128.meets_min_prefix(64));
+        assert!(!net_slash_10.meets_min_prefix(64));
+    }
+
+    #[test]
+    #[should_panic(expected = "Minimum prefix for v4 <= 32")]
+    fn test_prefix_check_ipv4_panic() {
+        let net = "192.168.1.0/24".parse::<Ipv4Net>().unwrap();
+        let _ = net.meets_min_prefix(33);
+    }
+
+    #[test]
+    #[should_panic(expected = "Minimum prefix for v6 <= 128")]
+    fn test_prefix_check_ipv6_panic() {
+        let net = "::1/128".parse::<Ipv6Net>().unwrap();
+        let _ = net.meets_min_prefix(129);
+    }
+
     #[test]
     fn test_ipv6_prefix_new_valid() {
         assert!(Ipv6Prefix::new(0).is_some());
@@ -277,33 +440,12 @@ mod tests {
         assert!(Ipv6Prefix::new(255).is_none());
     }
 
-    // Tests for Ipv6Prefix::as_u8()
     #[test]
     fn test_ipv6_prefix_as_u8() {
         let prefix = Ipv6Prefix::new(64).unwrap();
         assert_eq!(prefix.as_u8(), 64);
     }
 
-    // Tests for Ipv6Prefix::to_netmask()
-    #[test]
-    fn test_ipv6_prefix_to_netmask() {
-        let prefix = Ipv6Prefix::new(24).unwrap();
-        assert_eq!(
-            prefix.to_netmask(),
-            std::net::Ipv4Addr::new(255, 255, 255, 0)
-        );
-
-        let prefix = Ipv6Prefix::new(32).unwrap();
-        assert_eq!(prefix.to_netmask(), std::net::Ipv4Addr::BROADCAST);
-
-        let prefix = Ipv6Prefix::new(0).unwrap();
-        assert_eq!(prefix.to_netmask(), std::net::Ipv4Addr::UNSPECIFIED);
-
-        let prefix = Ipv6Prefix::new(16).unwrap();
-        assert_eq!(prefix.to_netmask(), std::net::Ipv4Addr::new(255, 255, 0, 0));
-    }
-
-    // Tests for From<Ipv6Prefix> for u8
     #[test]
     fn test_ipv6_prefix_into_u8() {
         let prefix = Ipv6Prefix::new(64).unwrap();
@@ -311,7 +453,6 @@ mod tests {
         assert_eq!(value, 64);
     }
 
-    // Tests for TryFrom<&[u8]> for Ipv{4,6}Prefix
     #[test]
     fn test_ipv6_prefix_try_from_bytes_valid() {
         assert!(Ipv6Prefix::try_from(b"0" as &[u8]).is_ok());
@@ -329,7 +470,6 @@ mod tests {
         assert!(Ipv6Prefix::try_from(b"-1" as &[u8]).is_err()); // Negative
     }
 
-    // Tests for parse_raw_prefix helper
     #[test]
     fn test_parse_raw_prefix_valid() {
         assert_eq!(parse_raw_prefix(b"0", 128), Some(0));
@@ -345,5 +485,16 @@ mod tests {
         assert_eq!(parse_raw_prefix(b"129", 128), None); // Above max
         assert_eq!(parse_raw_prefix(b"33", 32), None); // Above max
         assert_eq!(parse_raw_prefix(b"12a", 128), None); // Non-digit
+    }
+
+    #[test]
+    fn test_ipv6_prefix_roundtrip() {
+        for i in 0..=128 {
+            let prefix = Ipv6Prefix::new(i).unwrap();
+            assert_eq!(prefix.as_u8(), i);
+
+            let value: u8 = prefix.into();
+            assert_eq!(value, i);
+        }
     }
 }

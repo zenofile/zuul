@@ -3,7 +3,7 @@
 
 use std::sync::Arc;
 
-use crate::config::CowS;
+use crate::config::StaticCow;
 
 /// Immutable String (wrapper around Arc<str>)
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -60,8 +60,8 @@ impl From<String> for IStr {
     }
 }
 
-impl From<CowS> for IStr {
-    fn from(s: CowS) -> Self {
+impl From<StaticCow> for IStr {
+    fn from(s: StaticCow) -> Self {
         Self(Arc::from(s))
     }
 }
