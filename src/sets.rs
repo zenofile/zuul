@@ -51,21 +51,23 @@ impl SetInventory {
         }
     }
 
+    #[inline]
+    #[must_use]
     pub fn log_totals(&self) -> (usize, usize) {
-        let total_v4: usize = self
-            .v4_sets
-            .iter()
-            .inspect(|(name, set)| info!("Set {}: {} unique IPv4 networks", name, set.len()))
-            .map(|(_, set)| set.len())
-            .sum();
+        #[inline]
+        fn count_ips<T>(sets: &NetSets<T>, version: &str) -> usize {
+            sets.iter()
+                .inspect(|(name, set)| {
+                    info!("Set {}: {} unique {} networks", name, set.len(), version);
+                })
+                .map(|(_, set)| set.len())
+                .sum()
+        }
 
-        let total_v6: usize = self
-            .v6_sets
-            .iter()
-            .inspect(|(name, set)| info!("Set {}: {} unique IPv6 networks", name, set.len()))
-            .map(|(_, set)| set.len())
-            .sum();
-        (total_v4, total_v6)
+        (
+            count_ips(&self.v4_sets, "IPv4"),
+            count_ips(&self.v6_sets, "IPv6"),
+        )
     }
 }
 
@@ -95,7 +97,7 @@ where
         R: std::io::BufRead,
         F: Fn(&[u8]) -> cidr::ParsedResult<T>,
     {
-        let trusted_set = input.source.starts_with("inline:");
+        let trusted_set = input.trusted;
         let mut invalid = 0;
         const PAGE_ALIGNED_SIZE: usize = 4096;
 
@@ -308,6 +310,7 @@ mod tests {
             source,
             reader: cursor,
             min_prefix: MIN_PREFIX_LEN,
+            trusted: false,
         };
         _ = map.import_from_source("test-set", input, parse_u32_bytes);
 
@@ -329,6 +332,7 @@ mod tests {
             source,
             reader: cursor,
             min_prefix: MIN_PREFIX_LEN,
+            trusted: false,
         };
         _ = map.import_from_source("new-set", input, parse_u32_bytes);
         let set = map.get("new-set").expect("set should have been created");
@@ -346,6 +350,7 @@ mod tests {
             source,
             reader: cursor,
             min_prefix: MIN_PREFIX_LEN,
+            trusted: false,
         };
         _ = map.import_from_source("comments", input, parse_u32_bytes);
         let set = map.get("comments").expect("set should exist");
@@ -367,6 +372,7 @@ mod tests {
             source,
             reader: Cursor::new(content.to_vec()),
             min_prefix: 24,
+            trusted: false,
         };
         _ = map.import_from_source("filter_v4", input, parse_v4_net_bytes);
         let set = map.get("filter_v4").expect("set should exist");
@@ -393,6 +399,7 @@ mod tests {
             source,
             reader: Cursor::new(content.to_vec()),
             min_prefix: 24,
+            trusted: true,
         };
         _ = map.import_from_source("trusted_v4", input, parse_v4_net_bytes);
         let set = map.get("trusted_v4").expect("set should exist");
@@ -417,6 +424,7 @@ mod tests {
             source: "memory://overflow",
             reader: Cursor::new(content),
             min_prefix: 0,
+            trusted: false,
         };
         _ = map.import_from_source("overflow_test", input, parse_u32_bytes);
 
@@ -434,6 +442,7 @@ mod tests {
             source: "memory://eof_no_newline",
             reader: Cursor::new(content.to_vec()),
             min_prefix: 0,
+            trusted: false,
         };
         _ = map.import_from_source("eof_test", input, parse_u32_bytes);
 
@@ -456,6 +465,7 @@ mod tests {
             source: "memory://long_line_test",
             reader: Cursor::new(content),
             min_prefix: 0,
+            trusted: false,
         };
         _ = map.import_from_source("long_test", input, parse_u32_bytes);
         let set = map.get("long_test").expect("set should be created");
@@ -480,6 +490,7 @@ mod tests {
             source: "memory://boundary_test",
             reader: Cursor::new(content),
             min_prefix: 0,
+            trusted: false,
         };
         _ = map.import_from_source("boundary_test", input, parse_u32_bytes);
         let set = map.get("boundary_test").expect("set should be created");
@@ -500,6 +511,7 @@ mod tests {
             source: "memory://dedup",
             reader: Cursor::new(content.to_vec()),
             min_prefix: 0,
+            trusted: false,
         };
         _ = map.import_from_source("dedup_v4", input, parse_v4_net_bytes);
         let set = map.get("dedup_v4").unwrap();

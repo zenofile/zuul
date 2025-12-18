@@ -5,7 +5,7 @@ use std::thread;
 
 use anyhow::Result;
 use kanal::{Sender, bounded};
-use tracing::debug;
+use tracing::trace;
 
 pub struct ThreadPool<J, R> {
     pub workers: Vec<thread::JoinHandle<()>>,
@@ -34,12 +34,12 @@ where
             let worker = thread::Builder::new()
                 .name(format!("worker-{}", id))
                 .spawn(move || {
-                    debug!("Worker {} started", id);
+                    trace!("Worker {} started", id);
                     while let Ok((job, result_sender)) = receiver.recv() {
                         let result = worker_fn(job);
                         let _ = result_sender.send(result);
                     }
-                    debug!("Worker {} shutting down", id);
+                    trace!("Worker {} shutting down", id);
                 })
                 .expect("Failed to spawn worker thread");
             workers.push(worker);

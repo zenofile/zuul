@@ -15,13 +15,13 @@ where
     F: FnOnce(&mut dyn std::io::Write) -> Result<()>,
 {
     if dry_run {
-        debug!("Mocking nft command: nft -f -");
+        debug!("Dry-run, no-op command: nft -f -");
         let mut sink = std::io::sink();
         write_op(&mut sink)?;
         return Ok(());
     }
 
-    info!("Executing nft command: nft -f -");
+    info!("Executing command: nft -f -");
     let mut child = Command::new("nft")
         .arg("-f")
         .arg("-")
@@ -51,8 +51,8 @@ where
     let output = child.wait_with_output().context("Failed to wait on nft")?;
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        error!("nft command failed: {}", stderr);
-        return Err(anyhow::anyhow!("nft execution error: {stderr}"));
+        error!("Command failed: {}", stderr);
+        return Err(anyhow::anyhow!("Execution error: {stderr}"));
     }
 
     Ok(())
@@ -60,7 +60,7 @@ where
 
 pub fn run_nft_cli(args: &[&str], dry_run: bool) -> Result<Output> {
     if dry_run {
-        debug!("Mocking nft command: nft {}", args.join(" "));
+        debug!("Dry-run, no-op command: nft {}", args.join(" "));
         let mock_status = std::os::unix::process::ExitStatusExt::from_raw(0);
         return Ok(Output {
             status: mock_status,
@@ -69,34 +69,36 @@ pub fn run_nft_cli(args: &[&str], dry_run: bool) -> Result<Output> {
         });
     }
 
-    info!("Executing nft command: nft {}", args.join(" "));
+    info!("Executing command: nft {}", args.join(" "));
     let output = Command::new("nft")
         .args(args)
         .output()
-        .context("Failed to execute nft command")?;
+        .context("Failed to execute command")?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        error!("nft command failed: {}", stderr);
-        return Err(anyhow::anyhow!("nft execution error: {stderr}"));
+        error!("Command failed: {}", stderr);
+        return Err(anyhow::anyhow!("execution error: {stderr}"));
     }
     Ok(output)
 }
 
 pub fn cleanup_old_sets(context: &AppContext, active_epoch: u64) -> Result<()> {
+    debug!("Checking for old sets to clean up");
+    let output = run_nft_cli(
+        &["--terse", "list", "sets", "table", "netdev", "blackhole"],
+        context.dry_run,
+    )?;
+
     if context.dry_run {
-        debug!("Mocking cleanup of old sets");
+        debug!("Dry-run, not cleaning up anything");
         return Ok(());
     }
 
-    debug!("Checking for old sets to clean up");
-    let output = run_nft_cli(&["list", "sets", "table", "netdev", "blackhole"], false)?;
-    let stdout = String::from_utf8_lossy(&output.stdout);
-
-    let re = regex::Regex::new(r"set\s+([a-zA-Z0-9_]+)\s+\{").expect("Invalid regex");
-
     let cfg = &context.config;
     let dynamic_bases = [&cfg.set_names.abuselist, &cfg.set_names.country];
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let re = regex::Regex::new(r"set\s+([a-zA-Z0-9_]+)\s+\{").expect("Invalid regex");
 
     for cap in re.captures_iter(&stdout) {
         let name = &cap[1];
@@ -107,7 +109,7 @@ pub fn cleanup_old_sets(context: &AppContext, active_epoch: u64) -> Result<()> {
             .any(|base| name.starts_with(&format!("{}_", base)));
 
         if is_dynamic && !name.ends_with(&format!("_{}", active_epoch)) {
-            info!("Deleting old set: {}", name);
+            info!("Found dynamic set {}, deleting", name);
             // Ignore errors - set might be in use or already deleted
             let _ = run_nft_cli(
                 &["delete", "set", "netdev", "blackhole", name],

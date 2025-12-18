@@ -87,15 +87,23 @@ pub enum ListEntry {
     /// Supports the legacy format: - "<https://example.com/list.ip>"
     Simple(String),
     /// Supports the new format:    - { `url`: "...", `min_prefix`: 24 }
-    Detailed { url: String, min_prefix: Option<u8> },
+    Detailed {
+        url: String,
+        min_prefix: Option<u8>,
+        trusted: Option<bool>,
+    },
 }
 
 // Helper to extract data regardless of format
 impl ListEntry {
-    pub fn as_parts(&self) -> (&str, Option<u8>) {
+    pub fn as_parts(&self) -> (&str, Option<u8>, Option<bool>) {
         match self {
-            Self::Simple(s) => (s, None),
-            Self::Detailed { url, min_prefix } => (url, *min_prefix),
+            Self::Simple(s) => (s, None, None),
+            Self::Detailed {
+                url,
+                min_prefix,
+                trusted,
+            } => (url, *min_prefix, *trusted),
         }
     }
 }
