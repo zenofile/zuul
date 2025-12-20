@@ -534,7 +534,7 @@ mod tests {
         use std::{collections::HashMap, path::PathBuf};
 
         let project_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-        let test_file = project_root.join("test/ipv4-test.netset");
+        let test_file = project_root.join("tests/testdata/ipv4-test.netset");
 
         // Ensure the test file actually exists before trying to load it
         assert!(

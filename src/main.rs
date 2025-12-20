@@ -23,13 +23,14 @@ mod threadpool;
 mod sandbox;
 
 use std::{
+    env,
     io::{IsTerminal, Write},
     path::PathBuf,
 };
 
 use anyhow::{Context, Result};
 use clap::Parser;
-use tracing::{info, warn};
+use tracing::{info, level_filters::LevelFilter, warn};
 use tracing_subscriber::prelude::*;
 
 use crate::{
@@ -54,19 +55,26 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 #[inline]
 #[must_use]
-pub fn get_epoch_revision() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_secs()
+fn get_epoch_revision() -> u64 {
+    env::var("EPOCH_STABLE").map_or_else(
+        |_| {
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs()
+        },
+        |val| val.parse::<u64>().expect("Valid unix timestamp"),
+    )
 }
 
 fn start(context: &AppContext) -> Result<()> {
     info!("Starting zuul");
+
     let epoch = get_epoch_revision();
     let sets = collect_ip_sets(context);
 
-    // Pass "full_config" as the block name
+    info!("Generating dynamic sets with epoch suffix {}", epoch);
+
     let generator = |writer: &mut dyn Write| -> Result<()> {
         render_template(context, &sets, writer, "full_config", epoch)
     };
@@ -94,13 +102,11 @@ fn refresh(context: &AppContext) -> Result<()> {
     let epoch = get_epoch_revision();
     let sets = collect_ip_sets(context);
 
-    info!("Applying atomic update with suffix {}", epoch);
+    info!("Applying atomic update with epoch suffix {}", epoch);
 
     // Combine everything into one single transaction
     let atomic_update = |writer: &mut dyn Write| -> Result<()> {
         // TABLE BEGIN
-        // Note: This works in the same stream. nft processes line-by-line in a single transaction
-        // context.
         writeln!(writer, "flush chain netdev blackhole validation")?;
         writeln!(writer, "table netdev blackhole {{")?;
         render_template(context, &sets, writer, "sets_dynamic", epoch)?;
@@ -137,19 +143,26 @@ fn refresh(context: &AppContext) -> Result<()> {
 fn main() -> Result<()> {
     let cli = Cli::parse();
 
-    let level = match cli.verbose {
-        0 => tracing::Level::WARN,
-        1 => tracing::Level::INFO,
-        2 => tracing::Level::DEBUG,
-        _ => tracing::Level::TRACE,
+    let level_filter = if cli.quiet {
+        LevelFilter::OFF
+    } else {
+        match cli.verbose {
+            0 => LevelFilter::WARN,
+            1 => LevelFilter::INFO,
+            2 => LevelFilter::DEBUG,
+            _ => LevelFilter::TRACE,
+        }
     };
 
-    if std::env::var("JOURNAL_STREAM").is_ok() {
+    if env::var("JOURNAL_STREAM").is_ok() {
         let journald_layer = tracing_journald::layer().expect("Failed to connect to journald");
 
         // journald
         tracing_subscriber::registry()
-            .with(tracing_subscriber::EnvFilter::from_default_env().add_directive(level.into()))
+            .with(
+                tracing_subscriber::EnvFilter::from_default_env()
+                    .add_directive(level_filter.into()),
+            )
             .with(journald_layer)
             .init();
     } else {
@@ -157,7 +170,8 @@ fn main() -> Result<()> {
         let use_ansi = std::io::stdout().is_terminal();
         tracing_subscriber::fmt()
             .with_env_filter(
-                tracing_subscriber::EnvFilter::from_default_env().add_directive(level.into()),
+                tracing_subscriber::EnvFilter::from_default_env()
+                    .add_directive(level_filter.into()),
             )
             .with_writer(std::io::stderr)
             .with_ansi(use_ansi)
@@ -174,7 +188,7 @@ fn main() -> Result<()> {
         Ok(status) if cli.enforce_sandbox => {
             anyhow::bail!("Fatal: Sandbox is enforced but status is: {}", status)
         }
-        Ok(status) => warn!("Landlock sandbox is only: `{}`", status),
+        Ok(status) => warn!("Landlock sandbox is only: {}", status),
         Err(e) if cli.enforce_sandbox => {
             return Err(e).context("Fatal: Failed to initialize sandbox");
         }

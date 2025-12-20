@@ -38,6 +38,10 @@ pub struct Cli {
     /// Perform a dry-run without making actual changes
     #[arg(short = 'n', long)]
     pub dry_run: bool,
+
+    /// Do not output anything to stderr
+    #[arg(short = 'q', long)]
+    pub quiet: bool,
 }
 
 #[derive(Subcommand, Debug)]

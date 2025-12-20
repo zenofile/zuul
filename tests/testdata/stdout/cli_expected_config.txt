@@ -1,0 +1,67 @@
+Config {
+    net: IpConfigs {
+        v4: Ipv4Conf {
+            enabled: true,
+            min_prefix: 8,
+        },
+        v6: Ipv6Conf {
+            enabled: true,
+            min_prefix: 16,
+        },
+    },
+    default_policy: "accept",
+    block_policy: "drop",
+    iifname: [
+        "eth0",
+    ],
+    set_names: SetNames {
+        whitelist: "whitelist",
+        blacklist: "blacklist",
+        abuselist: "abuselist",
+        country: "country",
+    },
+    logging: LogConfig {
+        enabled: true,
+        level: "debug",
+        ratelimiting: true,
+        rate: 10,
+        burst: 5,
+    },
+    sources: Sources {
+        asn: AsnSources {
+            v4: [
+                "https://raw.githubusercontent.com/ipverse/asn-ip/master/as/{asn}/ipv4-aggregated.txt",
+            ],
+            v6: [
+                "https://raw.githubusercontent.com/ipverse/asn-ip/master/as/{asn}/ipv6-aggregated.txt",
+            ],
+        },
+        country: CountrySources {
+            v4: [
+                "https://raw.githubusercontent.com/herrbischoff/country-ip-blocks/master/ipv4/{country}.cidr",
+            ],
+            v6: [
+                "https://raw.githubusercontent.com/herrbischoff/country-ip-blocks/master/ipv6/{country}.cidr",
+            ],
+        },
+    },
+    whitelist: None,
+    blacklist: None,
+    abuselist: Some(
+        {
+            V4: [
+                Detailed {
+                    url: "file://tests/testdata/ipv4-test.netset",
+                    min_prefix: Some(
+                        0,
+                    ),
+                    trusted: None,
+                },
+                Simple(
+                    "file://tests/testdata/bogus.txt",
+                ),
+            ],
+        },
+    ),
+    country_list: None,
+}

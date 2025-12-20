@@ -30,6 +30,7 @@
 ## burst: Packet burst limit
 # LOGGING:
 #   enabled: yes
+#   level: debug
 #   ratelimiting: yes
 #   rate: 10
 #   burst: 5
@@ -75,8 +76,8 @@ ABUSELIST:
     # - https://iplists.firehol.org/files/firehol_abusers_1d.netset
     # - https://iplists.firehol.org/files/firehol_abusers_30d.netset
     # - https://iplists.firehol.org/files/bi_any_0_1d.ipset
-    # - https://raw.githubusercontent.com/lord-alfred/ipranges/refs/heads/main/openai/ipv4_merged.txt  # OpenAI
-    # - https://raw.githubusercontent.com/lord-alfred/ipranges/refs/heads/main/perplexity/ipv4_merged.txt # Perplexity
+    # - https://raw.githubusercontent.com/lord-alfred/ipranges/refs/heads/main/openai/ipv4_merged.txt
+    # - https://raw.githubusercontent.com/lord-alfred/ipranges/refs/heads/main/perplexity/ipv4_merged.txt
     # ...with min_prefix override
     - url: https://iplists.firehol.org/files/firehol_level2.netset
       min_prefix: 24

@@ -146,7 +146,10 @@ where
                 cold_path();
                 invalid += 1;
                 if tracing::level_enabled!(tracing::Level::DEBUG) {
-                    debug!("Invalid IP entry: {}", String::from_utf8_lossy(line_bytes));
+                    debug!(
+                        "Invalid IP entry: {}",
+                        String::from_utf8_lossy(&line_bytes[..line_bytes.len().min(0x32)])
+                    );
                 }
             }
         }

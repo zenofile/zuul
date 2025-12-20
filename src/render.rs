@@ -157,22 +157,6 @@ pub fn render_template(
     let cfg = &context.config;
     use minijinja::context;
 
-    // // Build map of set_name -> set_name_ipv
-    // let mut set_mappings = HashMap::new();
-    // for ver in [IpVersion::V4, IpVersion::V6] {
-    //     // Static sets don't change
-    //     let wl = format!("{}_{}", cfg.set_names.whitelist, ver);
-    //     set_mappings.insert(wl.clone(), wl);
-    //     let bl = format!("{}_{}", cfg.set_names.blacklist, ver);
-    //     set_mappings.insert(bl.clone(), bl);
-    //
-    //     let al = format!("{}_{}", cfg.set_names.abuselist, ver);
-    //     set_mappings.insert(al.clone(), al);
-    //
-    //     let cl = format!("{}_{}", cfg.set_names.country, ver);
-    //     set_mappings.insert(cl.clone(), cl);
-    // }
-
     let ctx = context! {
         iifname => &cfg.iifname,
         default_policy => &cfg.default_policy,

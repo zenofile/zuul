@@ -3,7 +3,7 @@
 set -eu
 
 IMAGE="docker.io/rustlang/rust:nightly-slim"
-BUILD_USER=$(whoami)
+BUILD_USER=$LOGNAME
 PROJECT_ROOT="$PWD"
 
 log_info() {
@@ -22,7 +22,7 @@ check_dependencies() {
 }
 
 check_project() {
-    if [[ ! -f "$PROJECT_ROOT/Cargo.toml" ]]; then
+    if [[ ! -f "${PROJECT_ROOT}/Cargo.toml" ]]; then
         log_error "No 'Cargo.toml' found in the current directory."
         log_error "Please run this script from the root of your Rust project."
         exit 1

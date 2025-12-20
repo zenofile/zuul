@@ -3,7 +3,7 @@ cargo-features = ["profile-rustflags"]
 [package]
 authors = ["zenofile", "zenofile <zenofile-sf6@unsha.re>"]
 categories = ["command-line-utilities"]
-description = "Nftables (nft) rule generator"
+description = "Nftables (nft) rules generator"
 edition = "2024"
 keywords = ["nft", "nftables", "netfilter", "firewall", "blackhole"]
 license = "GPL-3.0-or-later"
@@ -12,7 +12,7 @@ publish = false
 readme = "README.md"
 repository = "https://github.com/zenofile/zuul.git"
 rust-version = "1.94"
-version = "0.8.2"
+version = "0.8.3"
 
 [dependencies]
 anyhow = "1"

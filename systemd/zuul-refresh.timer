@@ -1,7 +1,7 @@
 # /etc/systemd/system/zuul-refresh.timer
 [Unit]
 Description=zuul periodic refresh timer
-Documentation=https://betaco.de/strom/zuul
+Documentation=https://github.com/zenofile/zuul
 Requires=zuul-main.service
 After=zuul-main.service
 

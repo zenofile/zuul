@@ -192,6 +192,7 @@ skip_fmt! {
     const fn default_accept() -> StaticCow { Cow::Borrowed("accept") }
     const fn default_drop() -> StaticCow { Cow::Borrowed("drop") }
     const fn default_log_enabled() -> bool { true }
+    const fn default_log_level() -> StaticCow { Cow::Borrowed("debug") }
     const fn default_log_ratelimiting() -> bool { true }
     const fn default_log_rate() -> u64 { 10 }
     const fn default_log_burst() -> u64 { 5 }
@@ -202,7 +203,9 @@ skip_fmt! {
 pub struct LogConfig {
     #[serde(default = "default_log_enabled")]
     pub enabled: bool,
-    #[serde(default = "default_log_enabled")]
+    #[serde(default = "default_log_level")]
+    pub level: StaticCow,
+    #[serde(default = "default_log_ratelimiting")]
     pub ratelimiting: bool,
     #[serde(default = "default_log_rate")]
     pub rate: u64,
@@ -214,6 +217,7 @@ impl Default for LogConfig {
     fn default() -> Self {
         Self {
             enabled: default_log_enabled(),
+            level: default_log_level(),
             ratelimiting: default_log_ratelimiting(),
             rate: default_log_rate(),
             burst: default_log_burst(),

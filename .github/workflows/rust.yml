@@ -30,4 +30,4 @@ jobs:
       - name: Checkout repo
         uses: actions/checkout@v4
       - name: Spaces check
-        run: git diff-tree --check $(git hash-object -t tree /dev/null) HEAD
+        run: git diff-tree --check $(git hash-object -t tree /dev/null) HEAD -- . ':(exclude)tests/testdata'

@@ -1,3 +1,24 @@
+{# =============================================================================
+Variables available in this template context:
+
+- iifname: list of interface names (strings)
+- default_policy: nft chain policy for ingress chains (e.g. "accept")
+- block_policy: action applied in log-target (e.g. "drop")
+- logging.enabled, logging.level, logging.ratelimiting, logging.rate, logging.burst
+- ip_versions.v4 / ip_versions.v6 (booleans)
+- set_names.whitelist / blacklist / abuselist / country (base names)
+
+- epoch: unix timestamp used to version dynamic sets (suffix "_{{ epoch }}")
+- sets: map of "<basename>_<v4|v6>" -> set object
+    - set.is_static: true for static sets, false for dynamic sets
+    - set prints as a comma-separated list of nftables elements (usable in elements = { ... })
+    - empty sets are omitted / treated as falsey
+
+NOTE (keep stable / hardcoded):
+    template block names "full_config", "sets_dynamic", "chain_validation",
+    and nftables identifiers "table netdev blackhole" + chain name "validation"
+============================================================================= #}
+
 {# Block 1: Static Sets (Whitelist, Blacklist) #}
 {% block sets_static %}
     {% for name, set in sets|items %}
@@ -72,7 +93,7 @@
                         {% if not sets[versioned].is_static %}
                             {% set versioned = versioned ~ "_" ~ epoch %}
                         {% endif %}
-                        ip saddr @{{ versioned}} counter name {{ base }}_v4_cnt goto log-debug
+                        ip saddr @{{ versioned}} counter name {{ base }}_v4_cnt goto log-target
                     {% endif %}
                 {% endfor %}
             {% endif %}
@@ -91,19 +112,20 @@
                         {% if not sets[versioned].is_static %}
                             {% set versioned = versioned ~ "_" ~ epoch %}
                         {% endif %}
-                        ip6 saddr @{{ versioned }} counter name {{ base }}_v6_cnt goto log-debug
+                        ip6 saddr @{{ versioned }} counter name {{ base }}_v6_cnt goto log-target
                     {% endif %}
                 {% endfor %}
             {% endif %}
         }
     {% endblock %}
 
-    chain log-debug {
+    chain log-target {
     {% if logging.enabled %}
     {% if logging.ratelimiting %}
-        limit rate {{ logging.rate }}/minute burst {{ logging.burst }} packets log level debug
+        limit rate {{ logging.rate }}/minute burst {{ logging.burst }} packets log level {{
+            logging.level }}
     {% else %}
-        log level debug
+        log level {{ logging.level }}
     {% endif %}
     {% endif %}
         {{ block_policy }}

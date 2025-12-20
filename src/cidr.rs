@@ -3,10 +3,10 @@
 
 /// CIDR parsing from ascii since ipnet only supports &str
 #[derive(Debug, Clone, Copy)]
-pub struct InvalidPrefix;
+pub struct Ipv4Prefix(u8);
 
 #[derive(Debug, Clone, Copy)]
-pub struct Ipv4Prefix(u8);
+pub struct InvalidPrefix;
 
 impl Ipv4Prefix {
     #[must_use]
