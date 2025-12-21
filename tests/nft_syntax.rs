@@ -6,11 +6,11 @@ use std::{
 
 #[test]
 fn cli_start_verify_nft_syntax() {
-    let exe = env!("CARGO_BIN_EXE_zuul");
+    let exe = env!("CARGO_BIN_EXE_rostschutz");
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let config = root.join("tests/testdata/config-test.yaml");
 
-    let zuul_output = Command::new(exe)
+    let rostschutz_output = Command::new(exe)
         .env("EPOCH_STABLE", "1766164828")
         .args(["-q", "-n", "-c"])
         .arg(&config)
@@ -19,7 +19,7 @@ fn cli_start_verify_nft_syntax() {
         .output()
         .expect("failed to spawn binary");
 
-    assert!(zuul_output.status.success(), "Generation failed");
+    assert!(rostschutz_output.status.success(), "Generation failed");
 
     let mut nft_cmd = Command::new("nft");
     nft_cmd
@@ -32,7 +32,7 @@ fn cli_start_verify_nft_syntax() {
         Ok(mut child) => {
             if let Some(mut stdin) = child.stdin.take() {
                 stdin
-                    .write_all(&zuul_output.stdout)
+                    .write_all(&rostschutz_output.stdout)
                     .expect("write to nft failed");
             }
             let output = child.wait_with_output().expect("wait on nft failed");

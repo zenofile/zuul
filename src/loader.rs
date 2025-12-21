@@ -151,7 +151,7 @@ fn download_url(timeout: u64, job: DownloadJob) -> DownloadResult {
     let result = (|| -> Result<()> {
         let mut easy = curl::easy::Easy::new();
         static USER_AGENT: &str = concat!(
-            "Mozilla/5.0 (compatible; zuul/",
+            "Mozilla/5.0 (compatible; rostschutz/",
             env!("CARGO_PKG_VERSION"),
             ")"
         );

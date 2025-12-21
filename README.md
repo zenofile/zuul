@@ -1,4 +1,4 @@
-# zuul
+# rostschutz
 
 A basic utility for managing nftables-based IP blocklists with support for country-based filtering and abuse list integration.
 
@@ -28,11 +28,11 @@ Inspired by [nft-blackhole](https://github.com/tomasz-c/nft-blackhole).
 
 ```cli
 cargo build --release --features=static
-cp target/release/zuul /usr/local/bin/
-mkdir -p /usr/local/etc/zuul/
-cp config.yaml template.j2 /usr/local/etc/zuul/
-cp -r systemd/zuul-.service.d /etc/systemd/system/
-cp systemd/zuul-main.service systemd/zuul-refresh.{service,timer} /etc/systemd/system/
+cp target/release/rostschutz /usr/local/bin/
+mkdir -p /usr/local/etc/rostschutz/
+cp config.yaml template.j2 /usr/local/etc/rostschutz/
+cp -r systemd/rostschutz-.service.d /etc/systemd/system/
+cp systemd/rostschutz-main.service systemd/rostschutz-refresh.{service,timer} /etc/systemd/system/
 systemctl daemon-reload
 ```
 
@@ -44,12 +44,12 @@ Edit `config.yaml` to configure IP versions, block policies, whitelists, blackli
 ## Usage
 
 ```log
-Usage: zuul [OPTIONS] <COMMAND>
+Usage: rostschutz [OPTIONS] <COMMAND>
 
 Commands:
-  start    Start zuul and create firewall rules
-  stop     Stop zuul and remove firewall rules
-  restart  Restart zuul (stop then start)
+  start    Start rostschutz and create firewall rules
+  stop     Stop rostschutz and remove firewall rules
+  restart  Restart rostschutz (stop then start)
   refresh  Update lists
   config   Display current configuration
   help     Print this message or the help of the given subcommand(s)
@@ -70,8 +70,8 @@ Options:
 Enable automatic updates with the included systemd units:
 
 ```cli
-systemctl enable --now zuul-main.service
-systemctl enable --now zuul-refresh.timer
+systemctl enable --now rostschutz-main.service
+systemctl enable --now rostschutz-refresh.timer
 ```
 
 The timer refreshes abuse and country lists at configured intervals.

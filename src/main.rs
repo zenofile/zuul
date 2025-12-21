@@ -68,7 +68,7 @@ fn get_epoch_revision() -> u64 {
 }
 
 fn start(context: &AppContext) -> Result<()> {
-    info!("Starting zuul");
+    info!("Starting rostschutz");
 
     let epoch = get_epoch_revision();
     let sets = collect_ip_sets(context);
@@ -90,7 +90,7 @@ fn start(context: &AppContext) -> Result<()> {
 }
 
 fn stop() -> Result<()> {
-    info!("Stopping zuul");
+    info!("Stopping rostschutz");
     nft::run_nft_cli(&["delete", "table", "netdev", "blackhole"], false)?;
     info!("Successfully deleted nftables table 'netdev blackhole'");
 
@@ -143,39 +143,42 @@ fn refresh(context: &AppContext) -> Result<()> {
 fn main() -> Result<()> {
     let cli = Cli::parse();
 
-    let level_filter = if cli.quiet {
-        LevelFilter::OFF
-    } else {
-        match cli.verbose {
-            0 => LevelFilter::WARN,
-            1 => LevelFilter::INFO,
-            2 => LevelFilter::DEBUG,
-            _ => LevelFilter::TRACE,
+    // Logging
+    {
+        let level_filter = if cli.quiet {
+            LevelFilter::OFF
+        } else {
+            match cli.verbose {
+                0 => LevelFilter::WARN,
+                1 => LevelFilter::INFO,
+                2 => LevelFilter::DEBUG,
+                _ => LevelFilter::TRACE,
+            }
+        };
+
+        if env::var("JOURNAL_STREAM").is_ok() {
+            let journald_layer = tracing_journald::layer().expect("Failed to connect to journald");
+
+            // journald
+            tracing_subscriber::registry()
+                .with(
+                    tracing_subscriber::EnvFilter::from_default_env()
+                        .add_directive(level_filter.into()),
+                )
+                .with(journald_layer)
+                .init();
+        } else {
+            // tty
+            let use_ansi = std::io::stdout().is_terminal();
+            tracing_subscriber::fmt()
+                .with_env_filter(
+                    tracing_subscriber::EnvFilter::from_default_env()
+                        .add_directive(level_filter.into()),
+                )
+                .with_writer(std::io::stderr)
+                .with_ansi(use_ansi)
+                .init();
         }
-    };
-
-    if env::var("JOURNAL_STREAM").is_ok() {
-        let journald_layer = tracing_journald::layer().expect("Failed to connect to journald");
-
-        // journald
-        tracing_subscriber::registry()
-            .with(
-                tracing_subscriber::EnvFilter::from_default_env()
-                    .add_directive(level_filter.into()),
-            )
-            .with(journald_layer)
-            .init();
-    } else {
-        // tty
-        let use_ansi = std::io::stdout().is_terminal();
-        tracing_subscriber::fmt()
-            .with_env_filter(
-                tracing_subscriber::EnvFilter::from_default_env()
-                    .add_directive(level_filter.into()),
-            )
-            .with_writer(std::io::stderr)
-            .with_ansi(use_ansi)
-            .init();
     }
 
     let config_path = resolve_fragment(cli.config, "config.yaml")?;

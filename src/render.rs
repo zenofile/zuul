@@ -140,8 +140,8 @@ pub fn render_template(
     jinja.set_auto_escape_callback(|_| minijinja::AutoEscape::None);
     jinja.set_trim_blocks(true);
     jinja.set_lstrip_blocks(true);
-    jinja.add_template("zuul", &template_content)?;
-    let template = jinja.get_template("zuul")?;
+    jinja.add_template("rostschutz", &template_content)?;
+    let template = jinja.get_template("rostschutz")?;
 
     let processor = RenderContext::new(&context.config, sets);
     let mut all_sets = HashMap::new();

@@ -4,7 +4,7 @@
 use clap::{Parser, Subcommand};
 
 #[derive(Parser, Debug)]
-#[command(name = "zuul")]
+#[command(name = "rostschutz")]
 #[command(about = "Templated nftables generator supporting remote blocklists", long_about = None)]
 pub struct Cli {
     #[command(subcommand)]
@@ -46,14 +46,14 @@ pub struct Cli {
 
 #[derive(Subcommand, Debug)]
 pub enum Action {
-    /// Start zuul and create firewall rules
+    /// Start rostschutz and create firewall rules
     Start {
         #[arg(short = 'o', long = "stdout")]
         print_stdout: bool,
     },
-    /// Stop zuul and remove firewall rules
+    /// Stop rostschutz and remove firewall rules
     Stop,
-    /// Restart zuul (stop then start)
+    /// Restart rostschutz (stop then start)
     Restart,
     /// Update lists
     Refresh {

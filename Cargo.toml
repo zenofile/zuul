@@ -7,12 +7,12 @@ description = "Nftables (nft) rules generator"
 edition = "2024"
 keywords = ["nft", "nftables", "netfilter", "firewall", "blackhole"]
 license = "GPL-3.0-or-later"
-name = "zuul"
+name = "rostschutz"
 publish = false
 readme = "README.md"
-repository = "https://github.com/zenofile/zuul.git"
+repository = "https://github.com/zenofile/rostschutz.git"
 rust-version = "1.94"
-version = "0.8.3"
+version = "0.9.0"
 
 [dependencies]
 anyhow = "1"

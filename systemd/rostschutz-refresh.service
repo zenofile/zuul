@@ -1,18 +1,14 @@
-# /etc/systemd/system/zuul.service
+# /etc/systemd/system/rostschutz-refresh.service
 [Unit]
-Description=zuul - nftables IP blocking service
-Documentation=https://github.com/zenofile/zuul
-After=network-online.target nss-lookup.target
-Wants=network-online.target
+Description=rostschutz periodic refresh
+Documentation=https://github.com/zenofile/rostschutz
+Requires=rostschutz-main.service
+After=rostschutzmain.service
 
 [Service]
 Type=oneshot
-RemainAfterExit=yes
-ExecStart=/usr/local/bin/zuul --verbose --enforce-sandbox --config /usr/local/etc/zuul/config.yaml --template /usr/local/etc/zuul/template.j2 start
-ExecStop=/usr/local/bin/zuul --verbose --enforce-sandbox --config /usr/local/etc/zuul/config.yaml --template /usr/local/etc/zuul/template.j2 stop
-ExecReload=/usr/local/bin/zuul --verbose --enforce-sandbox --config /usr/local/etc/zuul/config.yaml --template /usr/local/etc/zuul/template.j2 refresh
+ExecStart=/usr/local/bin/rostschutz --verbose --enforce-sandbox --config /usr/local/etc/rostschutz/config.yaml --template /usr/local/etc/rostschutz/template.j2 refresh
 TimeoutStartSec=120
-TimeoutStopSec=30
 
 # Security Hardening - Capabilities
 CapabilityBoundingSet=CAP_NET_ADMIN
@@ -24,7 +20,7 @@ ProtectSystem=full
 ProtectHome=yes
 PrivateTmp=yes
 ReadWritePaths=/run
-ConfigurationDirectory=zuul
+ConfigurationDirectory=rostschutz
 ConfigurationDirectoryMode=0750
 
 # Security Hardening - Kernel Protection
@@ -68,6 +64,3 @@ KeyringMode=private
 LimitNOFILE=1024
 LimitNPROC=64
 TasksMax=128
-
-[Install]
-WantedBy=multi-user.target

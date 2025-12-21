@@ -2,7 +2,7 @@ use std::{fs, path::PathBuf, process::Command};
 
 /// Helper to run a subcommand and compare its output against a golden file.
 fn assert_golden(command: &str, extra_args: &[&str]) {
-    let exe = env!("CARGO_BIN_EXE_zuul");
+    let exe = env!("CARGO_BIN_EXE_rostschutz");
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let config = root.join("tests/testdata/config-test.yaml");
     let expected_filename = format!("cli_expected_{}.txt", command);

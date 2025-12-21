@@ -1,0 +1,14 @@
+# /etc/systemd/system/rostschutz-refresh.timer
+[Unit]
+Description=rostschutz periodic refresh timer
+Documentation=https://github.com/zenofile/rostschutz
+Requires=rostschutz-main.service
+After=rostschutz-main.service
+
+[Timer]
+OnBootSec=24h
+OnUnitActiveSec=24h
+Persistent=false
+
+[Install]
+WantedBy=timers.target
