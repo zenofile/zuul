@@ -75,3 +75,93 @@ systemctl enable --now rostschutz-refresh.timer
 ```
 
 The timer refreshes abuse and country lists at configured intervals.
+
+## Example output generated
+
+```nft
+table netdev blackhole {
+    set blacklist_v4 {
+        type ipv4_addr;
+        flags interval;
+        auto-merge;
+        elements = { 224.0.0.0/3 }
+    }
+
+    set whitelist_v4 {
+        type ipv4_addr;
+        flags interval;
+        auto-merge;
+        elements = {
+            10.0.0.0/8,
+            217.142.30.0/24
+        }
+    }
+
+    set whitelist_v6 {
+        type ipv6_addr;
+        flags interval;
+        auto-merge;
+        elements = {
+            fc00::/7,
+            fd00::/8,
+            fe80::/10
+        }
+    }
+
+    set abuselist_v4_1766862325 {
+        type ipv4_addr;
+        flags interval;
+        auto-merge;
+        elements = {
+            1.2.239.214/32,
+            223.247.33.150/32,
+            223.247.218.112/32,
+            223.254.0.0/16
+        }
+    }
+
+    set abuselist_v6_1766862325 {
+        type ipv6_addr;
+        flags interval;
+        auto-merge;
+        elements = {
+            2400:3200::/32,
+            2400:3200::/48,
+            2a13:1800::/29,
+            2a13:8b40::/29
+        }
+    }
+
+    counter whitelist_v4_cnt {}
+    counter blacklist_v4_cnt {}
+    counter abuselist_v4_cnt {}
+    counter country_v4_cnt {}
+    counter whitelist_v6_cnt {}
+    counter blacklist_v6_cnt {}
+    counter abuselist_v6_cnt {}
+    counter country_v6_cnt {}
+
+    chain ingress_enp73s0 {
+            type filter hook ingress device "enp73s0" priority -190; policy accept;
+            jump validation
+        }
+
+        chain validation {
+            iifname "lo" accept
+
+            ip saddr @whitelist_v4 counter name whitelist_v4_cnt accept
+            ip saddr @blacklist_v4 counter name blacklist_v4_cnt goto log-target
+            ip saddr @abuselist_v4_1766862325 counter name abuselist_v4_cnt goto log-target
+            ip saddr @country_v4_1766862325 counter name country_v4_cnt goto log-target
+            ip6 saddr @whitelist_v6 counter name whitelist_v6_cnt accept
+            ip6 saddr @abuselist_v6_1766862325 counter name abuselist_v6_cnt goto log-target
+            ip6 saddr @country_v6_1766862325 counter name country_v6_cnt goto log-target
+        }
+
+        chain log-target {
+            limit rate 10/minute burst 5 packets log level debug
+            drop
+        }
+    }
+}
+```

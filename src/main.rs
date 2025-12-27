@@ -24,7 +24,7 @@ mod sandbox;
 
 use std::{
     env,
-    io::{IsTerminal, Write},
+    io::{self, Write},
     path::PathBuf,
 };
 
@@ -34,7 +34,7 @@ use tracing::{info, level_filters::LevelFilter, warn};
 use tracing_subscriber::prelude::*;
 
 use crate::{
-    cli::{Action, Cli},
+    cli::{Action, Cli, Color},
     config::{Config, resolve_fragment},
     loader::collect_ip_sets,
     render::render_template,
@@ -169,14 +169,19 @@ fn main() -> Result<()> {
                 .init();
         } else {
             // tty
-            let use_ansi = std::io::stdout().is_terminal();
+            let use_colors = match cli.color {
+                Color::Always => true,
+                Color::Never => false,
+                Color::Auto => io::IsTerminal::is_terminal(&io::stdout()),
+            };
+
             tracing_subscriber::fmt()
                 .with_env_filter(
                     tracing_subscriber::EnvFilter::from_default_env()
                         .add_directive(level_filter.into()),
                 )
                 .with_writer(std::io::stderr)
-                .with_ansi(use_ansi)
+                .with_ansi(use_colors)
                 .init();
         }
     }

@@ -12,7 +12,7 @@ publish = false
 readme = "README.md"
 repository = "https://github.com/zenofile/rostschutz.git"
 rust-version = "1.94"
-version = "0.9.1"
+version = "0.9.2"
 
 [dependencies]
 anyhow = "1"

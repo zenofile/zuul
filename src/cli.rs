@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright © 2025 zenofile <zenofile-sf6@unsha.re>
 
-use clap::{Parser, Subcommand};
+use clap::{Parser, Subcommand, ValueEnum};
 
 #[derive(Parser, Debug)]
 #[command(name = "rostschutz")]
@@ -21,6 +21,10 @@ pub struct Cli {
     /// Increase verbosity level (-v, -vv, -vvv, etc.)
     #[arg(short, long, action = clap::ArgAction::Count)]
     pub verbose: u8,
+
+    /// Terminal colors
+    #[arg(long, value_enum, default_value_t = Color::Auto)]
+    pub color: Color,
 
     /// Number of worker threads
     #[arg(short = 'w', long, default_value_t = 8)]
@@ -66,4 +70,11 @@ pub enum Action {
     },
     /// Display current configuration
     Config,
+}
+
+#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, ValueEnum, Debug)]
+pub enum Color {
+    Never,
+    Auto,
+    Always,
 }
